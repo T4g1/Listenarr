@@ -506,6 +506,10 @@ namespace Listenarr.Api.Services
 
         private string? GetDownloadUrlForPlatform()
         {
+            if (RuntimeInformation.OSArchitecture == Architecture.Arm64)
+            {
+                return "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz";
+            }
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
                 // johnvansickle static build (x86_64)
