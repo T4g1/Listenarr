@@ -3,6 +3,7 @@ using System;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Listenarr.Api.Services;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Extensions
 {
@@ -35,7 +36,7 @@ namespace Listenarr.Api.Extensions
             // Metadata extraction limiter to bound concurrent ffprobe calls
             services.AddSingleton<MetadataExtractionLimiter>();
             // Ffmpeg installer: provides a bundled ffprobe binary when not present on the system
-            services.AddSingleton<IFfmpegService, FfmpegInstallerService>();
+            services.AddSingleton<IFfmpegService, FfmpegService>();
             // Service to accept client-pushed download updates and maintain recent-push cache
             services.AddSingleton<DownloadPushService>();
             services.AddScoped<IAsinLookupService, AsinLookupService>();

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Xunit;
 using Listenarr.Api.Extensions;
 using Listenarr.Api.Services;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {

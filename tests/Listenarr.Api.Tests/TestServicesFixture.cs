@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Caching.Memory;
 using Listenarr.Api.Services;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {

@@ -1,8 +1,10 @@
+using System.ComponentModel;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Listenarr.Domain.Models;
+using SixLabors.ImageSharp;
 
 namespace Listenarr.Api.Services
 {
@@ -26,106 +28,29 @@ namespace Listenarr.Api.Services
         }
 
         /// <summary>
+        /// Apply the configured file naming pattern to generate the output path from settings
+        /// </summary>
+        public async Task<string> GenerateFilePathAsync(
+            AudioMetadata metadata,
+            string originalExtension = ".m4b")
+        {
+            var settings = await _configService.GetApplicationSettingsAsync() ?? new ApplicationSettings();
+            return await GenerateFilePathAsync(metadata, settings.OutputPath, originalExtension);
+        }
+
+        /// <summary>
         /// Apply the configured file naming pattern to generate the final file path
         /// </summary>
         public async Task<string> GenerateFilePathAsync(
             AudioMetadata metadata,
-            int? diskNumber = null,
-            int? chapterNumber = null,
-            string originalExtension = ".m4b")
-        {
-            var settings = await _configService.GetApplicationSettingsAsync() ?? new ApplicationSettings();
-            var folderPattern = settings.FolderNamingPattern;
-            
-            // Determine if this is a multi-file import (has disk or chapter number)
-            bool isMultiFile = diskNumber.HasValue || chapterNumber.HasValue;
-            var filePattern = isMultiFile 
-                ? settings.MultiFileNamingPattern 
-                : settings.FileNamingPattern;
-            
-            var outputPath = settings.OutputPath;
-
-            var variables = BuildVariables(metadata, diskNumber, chapterNumber);
-
-            // Diagnostic logging: record the variables used for pattern replacement
-            try
-            {
-                var dbg = string.Join(", ", variables.Select(kv => $"{kv.Key}='{kv.Value}'"));
-                _logger.LogInformation("FileNamingService variables: {Vars}", dbg);
-            }
-            catch (Exception caughtEx_1) when (caughtEx_1 is not OperationCanceledException && caughtEx_1 is not OutOfMemoryException && caughtEx_1 is not StackOverflowException) {
-                // ignore logging errors
-                            System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-            }
-
-            string relativePath;
-            if (string.IsNullOrWhiteSpace(folderPattern))
-            {
-                // Legacy behavior: use FileNamingPattern as the full relative path pattern
-                var legacyPattern = string.IsNullOrWhiteSpace(filePattern)
-                    ? "{Author}/{Series}/{Title}"
-                    : filePattern;
-
-                relativePath = ApplyNamingPattern(legacyPattern, variables);
-            }
-            else
-            {
-                // New behavior: separate folder and file patterns
-                var effectiveFilePattern = string.IsNullOrWhiteSpace(filePattern) ? "{Title}" : filePattern;
-
-                var folderRelative = ApplyNamingPattern(folderPattern, variables, treatAsFilename: false);
-                
-                // Normalize path separators to platform-specific ones
-                if (!string.IsNullOrWhiteSpace(folderRelative))
-                {
-                    folderRelative = folderRelative.Replace('/', Path.DirectorySeparatorChar)
-                                                   .Replace('\\', Path.DirectorySeparatorChar);
-                }
-
-                var patternAllowsSubfolders = effectiveFilePattern.IndexOf("DiskNumber", StringComparison.OrdinalIgnoreCase) >= 0
-                    || effectiveFilePattern.IndexOf("ChapterNumber", StringComparison.OrdinalIgnoreCase) >= 0
-                    || effectiveFilePattern.IndexOf('/') >= 0
-                    || effectiveFilePattern.IndexOf('\\') >= 0;
-
-                var fileRelative = ApplyNamingPattern(effectiveFilePattern, variables, treatAsFilename: !patternAllowsSubfolders);
-
-                relativePath = string.IsNullOrWhiteSpace(folderRelative)
-                    ? fileRelative
-                    : CombineWithOptionalBase(folderRelative, fileRelative);
-            }
-
-            // Ensure it has the correct extension
-            if (!relativePath.EndsWith(originalExtension, StringComparison.OrdinalIgnoreCase))
-            {
-                relativePath += originalExtension;
-            }
-
-            // Combine with output path if configured
-            var fullPath = string.IsNullOrWhiteSpace(outputPath)
-                ? relativePath
-                : CombineWithOptionalBase(outputPath, relativePath);
-
-            fullPath = EnsurePathWithinLimits(fullPath);
-
-            _logger.LogInformation("Generated file path: {FilePath}", fullPath);
-            return fullPath;
-        }
-
-        /// <summary>
-        /// Apply the configured file naming pattern to generate the final file path with a specific output path
-        /// </summary>
-        public async Task<string> GenerateFilePathAsync(
-            AudioMetadata metadata,
             string outputPath,
-            int? diskNumber = null,
-            int? chapterNumber = null,
             string originalExtension = ".m4b")
         {
             var settings = await _configService.GetApplicationSettingsAsync() ?? new ApplicationSettings();
             var folderPattern = settings.FolderNamingPattern;
             
             // Determine if this is a multi-file import (has disk or chapter number)
-            bool isMultiFile = diskNumber.HasValue || chapterNumber.HasValue;
+            bool isMultiFile = metadata.DiscNumber.HasValue || metadata.TrackNumber.HasValue;
             var filePattern = isMultiFile 
                 ? settings.MultiFileNamingPattern 
                 : settings.FileNamingPattern;
@@ -149,13 +74,13 @@ namespace Listenarr.Api.Services
                             System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
             }
 
-            var variables = BuildVariables(metadata, diskNumber, chapterNumber);
+            var variables = BuildVariables(metadata);
 
-            // Diagnostic logging: record the variables used for pattern replacement (custom outputPath overload)
+            // Diagnostic logging: record the variables used for pattern replacement
             try
             {
                 var dbg = string.Join(", ", variables.Select(kv => $"{kv.Key}='{kv.Value}'"));
-                _logger.LogInformation("FileNamingService variables (custom outputPath): {Vars}", dbg);
+                _logger.LogInformation("FileNamingService variables: {Vars}", dbg);
             }
             catch (Exception caughtEx_3) when (caughtEx_3 is not OperationCanceledException && caughtEx_3 is not OutOfMemoryException && caughtEx_3 is not StackOverflowException) {
                 // ignore logging errors
@@ -211,7 +136,7 @@ namespace Listenarr.Api.Services
 
             fullPath = EnsurePathWithinLimits(fullPath);
 
-            _logger.LogInformation("Generated file path with custom output path: {FilePath}", fullPath);
+            _logger.LogInformation("Generated file path: {FilePath}", fullPath);
             return fullPath;
         }
 
@@ -390,7 +315,7 @@ namespace Listenarr.Api.Services
             return result;
         }
 
-        private Dictionary<string, object> BuildVariables(AudioMetadata metadata, int? diskNumber, int? chapterNumber)
+        private Dictionary<string, object> BuildVariables(AudioMetadata metadata)
         {
             return new Dictionary<string, object>
             {
@@ -408,9 +333,9 @@ namespace Listenarr.Api.Services
                 { "Asin", string.IsNullOrWhiteSpace(metadata.Asin) ? string.Empty : SanitizePathComponent(metadata.Asin) },
                 { "SeriesNumber", FirstNonEmpty(metadata.SeriesPosition?.ToString(), metadata.TrackNumber?.ToString()) },
                 { "Year", FirstNonEmpty(metadata.Year?.ToString()) },
-                { "Quality", FirstNonEmpty((metadata.Bitrate.HasValue ? metadata.Bitrate + "kbps" : null), metadata.Format) },
-                { "DiskNumber", FirstNonEmpty(diskNumber?.ToString(), metadata.DiscNumber?.ToString()) },
-                { "ChapterNumber", FirstNonEmpty(chapterNumber?.ToString(), metadata.TrackNumber?.ToString()) }
+                { "Quality", FirstNonEmpty(metadata.Bitrate.HasValue ? metadata.Bitrate + "kbps" : null, metadata.Format) },
+                { "DiskNumber", metadata.DiscNumber?.ToString() ?? string.Empty },
+                { "ChapterNumber", metadata.TrackNumber?.ToString() ?? string.Empty }
             };
         }
 

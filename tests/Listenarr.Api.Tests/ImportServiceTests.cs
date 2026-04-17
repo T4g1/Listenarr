@@ -11,6 +11,7 @@ using Moq;
 using Xunit;
 using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {
@@ -314,6 +315,7 @@ namespace Listenarr.Api.Tests
                 EnableMetadataProcessing = false,
                 FolderNamingPattern = "",
                 FileNamingPattern = "{Title}",
+                MultiFileNamingPattern = "{Title}-{DiskNumber:00}",
                 ImportBlacklistExtensions = new System.Collections.Generic.List<string>()
             };
 
@@ -367,6 +369,7 @@ namespace Listenarr.Api.Tests
                 EnableMetadataProcessing = false,
                 FolderNamingPattern = "",
                 FileNamingPattern = "{Title}",
+                MultiFileNamingPattern = "{Title}-{DiskNumber:00}",
                 ImportBlacklistExtensions = new System.Collections.Generic.List<string> { ".txt" }
             };
 

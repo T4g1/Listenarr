@@ -15,6 +15,7 @@ using Xunit;
 namespace Listenarr.Api.Tests
 {
     [Trait("Area", "ProcessingBackgroundRecovery")]
+    [Trait("Category", "DownloadProcessing")]
     public class DownloadProcessingBackgroundServiceRecoveryTests
     {
         [Fact]

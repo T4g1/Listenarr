@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
+using Listenarr.Api.Services.Metadata;
 using Listenarr.Domain.Models;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;

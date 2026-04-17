@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.EntityFrameworkCore;
 using Listenarr.Domain.Utils;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Services
 {
@@ -131,25 +132,39 @@ namespace Listenarr.Api.Services
                     {
                         try
                         {
-                            var files = System.IO.Directory.GetFiles(finalPath, "*", System.IO.SearchOption.AllDirectories)
-                                .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
-                                .ToArray();
-                            var clientScopedFiles = await FilterToClientReportedFilesAsync(download, finalPath, files);
-                            files = clientScopedFiles.Files;
-                            var archiveFiles = files.Where(f => _archiveExtractor.IsArchive(f)).ToArray();
-                            var directImportFiles = files
-                                .Where(f => !_archiveExtractor.IsArchive(f))
-                                .ToArray();
-
-                            if (directImportFiles.Length > 1 && !clientScopedFiles.UsedClientScope)
+                            var files = new List<string>();
+                            try
                             {
-                                directImportFiles = await FilterDirectoryAudioFilesAsync(download, directImportFiles);
+                                if (download != null)
+                                {
+                                    files = await DownloadProcessingBackgroundService.MatchLocalAndDownloadedFilesAsync(_serviceScopeFactory.CreateScope(), download, finalPath, settings.ImportBlacklistExtensions, _logger);
+                                }
+                                else
+                                {
+                                    throw new DownloadProcessingException("No download avaiable for filtering");
+                                }
                             }
+                            catch(DownloadProcessingException exception)
+                            {
+                                _logger.LogWarning(exception, exception.Message);
+                                _logger.LogInformation("Falling back on intelligent audio file filtering");
+
+                                files = [.. Directory.EnumerateFiles(finalPath, "*.*", SearchOption.AllDirectories)
+                                    .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
+                                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+                                
+                                files = await FilterDirectoryAudioFilesAsync(download, files);
+                            }
+                            
+                            var archiveFiles = files.Where(f => _archiveExtractor.IsArchive(f)).ToList();
+                            files = files
+                                .Where(f => !_archiveExtractor.IsArchive(f))
+                                .ToList();
 
                             List<ImportResult>? importResults = null;
-                            if (directImportFiles.Length > 0)
+                            if (files.Count() > 0)
                             {
-                                importResults = await _fileFinalizer.ImportFilesFromDirectoryAsync(downloadId, download?.AudiobookId, directImportFiles, settings);
+                                importResults = await _fileFinalizer.ImportFilesFromDirectoryAsync(downloadId, download?.AudiobookId, files, settings);
                                 _logger.LogInformation("FileFinalizer.ImportFilesFromDirectoryAsync returned {Count} results for download {DownloadId}", importResults?.Count ?? 0, downloadId);
                             }
 
@@ -354,7 +369,7 @@ namespace Listenarr.Api.Services
                                     }
                                 }
                             }
-                            else if (directImportFiles.Length == 0)
+                            else if (files.Count() == 0)
                             {
                                 _logger.LogInformation("ProcessCompletedDownloadAsync: directory {FinalPath} contains no files to import (DownloadId: {DownloadId})", finalPath, downloadId);
                             }
@@ -1049,7 +1064,7 @@ namespace Listenarr.Api.Services
             }
         }
 
-        private async Task<string[]> FilterDirectoryAudioFilesAsync(Download? download, string[] files)
+        private async Task<List<string>> FilterDirectoryAudioFilesAsync(Download? download, List<string> files)
         {
             var audioFiles = files
                 .Where(FileUtils.IsAudioFile)
@@ -1127,12 +1142,12 @@ namespace Listenarr.Api.Services
                 var selectedAudio = new HashSet<string>(grouped[0].Files, StringComparer.OrdinalIgnoreCase);
                 var filtered = files
                     .Where(file => !FileUtils.IsAudioFile(file) || selectedAudio.Contains(file))
-                    .ToArray();
+                    .ToList();
 
                 _logger.LogInformation(
                     "Filtered completed-download directory import from {OriginalCount} to {FilteredCount} file(s) after separating mixed audio groups for download {DownloadId}",
-                    files.Length,
-                    filtered.Length,
+                    files.Count(),
+                    filtered.Count(),
                     download?.Id ?? "(unknown)");
 
                 return filtered;
@@ -1142,110 +1157,6 @@ namespace Listenarr.Api.Services
                 _logger.LogDebug(ex, "Failed to classify mixed audio files for completed-download import; falling back to importing the full directory");
                 return files;
             }
-        }
-
-        private async Task<(string[] Files, bool UsedClientScope)> FilterToClientReportedFilesAsync(
-            Download? download,
-            string? finalPath,
-            string[] files)
-        {
-            if (download == null || files.Length == 0 || string.IsNullOrWhiteSpace(download.DownloadClientId))
-            {
-                return (files, false);
-            }
-
-            try
-            {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var importResolver = scope.ServiceProvider.GetService<IImportItemResolutionService>();
-                if (importResolver == null)
-                {
-                    return (files, false);
-                }
-
-                var clientContentPath = download.Metadata?.TryGetValue("ClientContentPath", out var ccp) is true
-                    ? ccp?.ToString()
-                    : null;
-                var preliminaryItem = new QueueItem
-                {
-                    Id = GetClientDownloadItemId(download) ?? download.Id,
-                    Title = download.Title ?? "Unknown",
-                    Status = "completed",
-                    ContentPath = clientContentPath ?? finalPath ?? download.FinalPath ?? download.DownloadPath,
-                    DownloadClientId = download.DownloadClientId
-                };
-
-                var resolvedItem = await importResolver.ResolveImportItemAsync(
-                    download,
-                    preliminaryItem,
-                    previousAttempt: null);
-
-                if (resolvedItem.SourceFiles == null || resolvedItem.SourceFiles.Count == 0)
-                {
-                    return (files, false);
-                }
-
-                var allowedFiles = new HashSet<string>(
-                    resolvedItem.SourceFiles
-                        .Where(path => !string.IsNullOrWhiteSpace(path))
-                        .Select(path => FileUtils.NormalizeStoredPath(path)),
-                    StringComparer.OrdinalIgnoreCase);
-
-                var filteredFiles = files
-                    .Where(path => allowedFiles.Contains(FileUtils.NormalizeStoredPath(path)))
-                    .ToArray();
-
-                if (filteredFiles.Length == 0)
-                {
-                    _logger.LogWarning(
-                        "Download client reported {ClientFileCount} related file(s) for completed download {DownloadId}, but none matched the discovered files under {FinalPath}",
-                        allowedFiles.Count,
-                        download.Id,
-                        finalPath);
-                    return (files, false);
-                }
-
-                _logger.LogInformation(
-                    "Scoped completed-download directory import for {DownloadId} from {OriginalCount} to {FilteredCount} file(s) using the download client's reported file list",
-                    download.Id,
-                    files.Length,
-                    filteredFiles.Length);
-
-                return (filteredFiles, true);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-            {
-                _logger.LogDebug(ex, "Failed to scope completed-download directory import to download-client reported files for {DownloadId}", download.Id);
-                return (files, false);
-            }
-        }
-
-        private static string? GetClientDownloadItemId(Download download)
-        {
-            if (download.Metadata == null)
-            {
-                return null;
-            }
-
-            if (download.Metadata.TryGetValue("ClientDownloadId", out var clientIdObj))
-            {
-                var clientId = clientIdObj?.ToString();
-                if (!string.IsNullOrWhiteSpace(clientId))
-                {
-                    return clientId;
-                }
-            }
-
-            if (download.Metadata.TryGetValue("TorrentHash", out var torrentHashObj))
-            {
-                var torrentHash = torrentHashObj?.ToString();
-                if (!string.IsNullOrWhiteSpace(torrentHash))
-                {
-                    return torrentHash;
-                }
-            }
-
-            return null;
         }
 
         private async Task MarkImportFailureAsync(

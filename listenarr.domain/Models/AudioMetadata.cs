@@ -16,6 +16,8 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+using System.Data;
+
 namespace Listenarr.Domain.Models
 {
     public class AudioMetadata
@@ -53,5 +55,38 @@ namespace Listenarr.Domain.Models
         public byte[]? CoverArt { get; set; }
         public string? CoverArtUrl { get; set; }
         public Dictionary<string, object> AdditionalData { get; set; } = new();
+
+        /// <summary>
+        /// Update empty attributes with the given metadata
+        /// </summary>
+        /// <param name="value">New data to complete the current one</param>
+        public void Update(AudioMetadata value)
+        {
+            if (string.IsNullOrWhiteSpace(Title))
+            {
+                Title = value.Title;
+            }
+            if (string.IsNullOrWhiteSpace(Artist))
+            {
+                Artist = value.Artist;
+            }
+            if (string.IsNullOrWhiteSpace(Album))
+            {
+                Album = value.Album;
+            }
+
+            if (!SeriesPosition.HasValue && value.SeriesPosition.HasValue)
+                SeriesPosition = value.SeriesPosition;
+            if (!TrackNumber.HasValue && value.TrackNumber.HasValue)
+                TrackNumber = value.TrackNumber;
+            if (!DiscNumber.HasValue && value.DiscNumber.HasValue)
+                DiscNumber = value.DiscNumber;
+            if (!Year.HasValue && value.Year.HasValue)
+                Year = value.Year;
+            if (!Bitrate.HasValue && value.Bitrate.HasValue)
+                Bitrate = value.Bitrate;
+            if (string.IsNullOrWhiteSpace(Format) && !string.IsNullOrWhiteSpace(value.Format))
+                Format = value.Format;
+        }
     }
 }

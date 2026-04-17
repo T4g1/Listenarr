@@ -1,6 +1,6 @@
 using AsyncKeyedLock;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Api.Services.Metadata
 {
     public class MetadataExtractionLimiter
     {

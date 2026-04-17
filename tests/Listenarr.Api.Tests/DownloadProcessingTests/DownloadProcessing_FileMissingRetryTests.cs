@@ -1,17 +1,14 @@
-﻿using System;
-using System.IO;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using Listenarr.Api.Services;
-using Listenarr.Domain.Models;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {
+    [Trait("Category", "DownloadProcessing")]
     public class DownloadProcessing_FileMissingRetryTests
     {
         [Fact]
@@ -73,6 +70,10 @@ namespace Listenarr.Api.Tests
 
             var metricsMock = new Mock<IAppMetricsService>();
             services.AddSingleton<IAppMetricsService>(metricsMock.Object);
+            services.AddSingleton(new Mock<IFfmpegService>().Object);
+            services.AddSingleton(new Mock<HttpClient>().Object);
+            services.AddSingleton<IProcessRunner, SystemProcessRunner>();
+            services.AddScoped<IMetadataService, MetadataService>();
 
             var loggerMock = new Mock<Microsoft.Extensions.Logging.ILogger<DownloadProcessingBackgroundService>>();
 
@@ -160,6 +161,14 @@ namespace Listenarr.Api.Tests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton(db);
+            services.AddSingleton(new Mock<IImportItemResolutionService>().Object);
+            services.AddSingleton(new Mock<IFfmpegService>().Object);
+            services.AddSingleton(new Mock<HttpClient>().Object);
+            services.AddSingleton<IProcessRunner, SystemProcessRunner>();
+            services.AddMemoryCache(); 
+            services.AddScoped<IMetadataService, MetadataService>();
+            services.AddScoped<IRemotePathMappingService, RemotePathMappingService>();
+            
 
             var configMock = new Mock<IConfigurationService>();
             configMock.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(new ApplicationSettings
@@ -170,13 +179,13 @@ namespace Listenarr.Api.Tests
             });
             services.AddSingleton<IConfigurationService>(configMock.Object);
 
-            string? finalizedPath = null;
+            string? processedPath = null;
             var downloadServiceMock = new Mock<IDownloadService>();
             downloadServiceMock
                 .Setup(d => d.ProcessCompletedDownloadAsync(dl.Id, It.IsAny<string>()))
                 .Callback<string, string>((id, path) =>
                 {
-                    finalizedPath = path;
+                    processedPath = path;
                     var tracked = db.Downloads.Find(id);
                     if (tracked != null)
                     {
@@ -221,12 +230,10 @@ namespace Listenarr.Api.Tests
             Assert.True(File.Exists(expectedAudioDest));
             Assert.True(File.Exists(expectedCoverDest));
             Assert.True(File.Exists(expectedTxtDest));
-            Assert.Equal(expectedAudioDest, finalizedPath);
-            Assert.Equal(expectedAudioDest, job.DestinationPath);
+            Assert.Equal(sourceDir, processedPath);
+            Assert.Equal(destRoot, job.DestinationPath);
 
-            downloadServiceMock.Verify(d => d.ProcessCompletedDownloadAsync(dl.Id, expectedAudioDest), Times.Once);
-            downloadServiceMock.Verify(d => d.ProcessCompletedDownloadAsync(dl.Id, expectedCoverDest), Times.Never);
-            downloadServiceMock.Verify(d => d.ProcessCompletedDownloadAsync(dl.Id, expectedTxtDest), Times.Never);
+            downloadServiceMock.Verify(d => d.ProcessCompletedDownloadAsync(dl.Id, sourceDir), Times.Once);
 
             try { Directory.Delete(sourceDir, true); }
             catch (IOException) { /* Best-effort cleanup for temp test directories. */ }
@@ -238,6 +245,7 @@ namespace Listenarr.Api.Tests
         }
 
         [Fact]
+        [Trait("Method", "ProcessMoveOrCopyJobAsync")]
         public async Task ProcessMoveOrCopy_DirectorySource_UsesClientReportedFilesToExcludeUnrelatedFiles()
         {
             var dbOptions = new DbContextOptionsBuilder<ListenArrDbContext>()
@@ -304,13 +312,13 @@ namespace Listenarr.Api.Tests
                 });
             services.AddSingleton<IImportItemResolutionService>(importResolverMock.Object);
 
-            string? finalizedPath = null;
+            string? processedPath = null;
             var downloadServiceMock = new Mock<IDownloadService>();
             downloadServiceMock
                 .Setup(d => d.ProcessCompletedDownloadAsync(dl.Id, It.IsAny<string>()))
                 .Callback<string, string>((id, path) =>
                 {
-                    finalizedPath = path;
+                    processedPath = path;
                     var tracked = db.Downloads.Find(id);
                     if (tracked != null)
                     {
@@ -324,6 +332,13 @@ namespace Listenarr.Api.Tests
 
             var metricsMock = new Mock<IAppMetricsService>();
             services.AddSingleton<IAppMetricsService>(metricsMock.Object);
+            
+            services.AddMemoryCache(); 
+            services.AddScoped<IRemotePathMappingService, RemotePathMappingService>();
+            services.AddSingleton(new Mock<IFfmpegService>().Object);
+            services.AddSingleton(new Mock<HttpClient>().Object);
+            services.AddSingleton<IProcessRunner, SystemProcessRunner>();
+            services.AddScoped<IMetadataService, MetadataService>();
 
             var loggerMock = new Mock<Microsoft.Extensions.Logging.ILogger<DownloadProcessingBackgroundService>>();
 
@@ -351,7 +366,7 @@ namespace Listenarr.Api.Tests
             Assert.True(File.Exists(Path.Join(destRoot, "cover.jpg")));
             Assert.True(File.Exists(Path.Join(destRoot, "book.txt")));
             Assert.False(File.Exists(Path.Join(destRoot, "unrelated.txt")));
-            Assert.Equal(Path.Join(destRoot, "book.m4b"), finalizedPath);
+            Assert.Equal(sourceDir, processedPath);
 
             try { Directory.Delete(sourceDir, true); }
             catch (IOException) { /* Best-effort cleanup for temp test directories. */ }

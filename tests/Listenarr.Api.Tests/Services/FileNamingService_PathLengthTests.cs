@@ -11,6 +11,7 @@ namespace Listenarr.Api.Tests
     /// <summary>
     /// Tests for FileNamingService Windows path length enforcement (MAX_PATH / per-component limits)
     /// </summary>
+    [Trait("Category", "FileNamingService")]
     public class FileNamingService_PathLengthTests
     {
         private readonly FileNamingService _service;

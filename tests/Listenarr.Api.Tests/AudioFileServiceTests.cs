@@ -8,6 +8,7 @@ using Xunit;
 using Moq;
 using Listenarr.Domain.Models;
 using Listenarr.Api.Services;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {

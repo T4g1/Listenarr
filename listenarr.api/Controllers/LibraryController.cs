@@ -37,6 +37,7 @@ using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using System.Text;
 using Listenarr.Domain.Utils;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Controllers
 {

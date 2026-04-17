@@ -3,7 +3,7 @@ using Listenarr.Domain.Utils;
 using Listenarr.Infrastructure.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Api.Services.Metadata
 {
     // Background hosted service to rescan files missing metadata and populate DB fields
     public class MetadataRescanService : BackgroundService

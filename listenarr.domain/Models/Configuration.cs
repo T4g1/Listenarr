@@ -143,7 +143,7 @@ namespace Listenarr.Domain.Models
         // {ChapterNumber} or {ChapterNumber:00} - Chapter number (00 = zero-padded)
         // {Year} - Publication year
         // {Quality} - Audio quality (e.g., "64kbps mp3")
-        public string MultiFileNamingPattern { get; set; } = "{Title}-{DiskNumber:00}";
+        public string MultiFileNamingPattern { get; set; } = "{Title}-{DiskNumber:00}-{ChapterNumber:00}";
 
         public bool EnableMetadataProcessing { get; set; } = true;
         public bool EnableCoverArtDownload { get; set; } = true;

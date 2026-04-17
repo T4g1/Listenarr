@@ -639,8 +639,6 @@ namespace Listenarr.Domain.Utils
             string root = Path.GetPathRoot(Directory.GetCurrentDirectory()) ?? "/";
             return Path.Combine(root, Path.Combine(segments));
         }
-
-        
     }
 }
 

@@ -11,6 +11,7 @@ using Listenarr.Domain.Models;
 using Listenarr.Api.Services;
 using Microsoft.AspNetCore.SignalR;
 using Listenarr.Api.Hubs;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {

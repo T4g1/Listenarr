@@ -41,7 +41,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - single file (no disk number)
-            var result = await service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert
             Assert.NotNull(result);
@@ -76,9 +76,12 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - generate paths for multiple disks
-            var path1 = await service.GenerateFilePathAsync(metadata, diskNumber: 1, chapterNumber: null, ".m4b");
-            var path2 = await service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: null, ".m4b");
-            var path3 = await service.GenerateFilePathAsync(metadata, diskNumber: 3, chapterNumber: null, ".m4b");
+            metadata.DiscNumber = 1;
+            var path1 = await service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 2;
+            var path2 = await service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 3;
+            var path3 = await service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - all paths should be different
             Assert.NotEqual(path1, path2);
@@ -123,7 +126,8 @@ namespace Listenarr.Api.Tests
                 var paths = new List<string>();
                 for (int i = 1; i <= 3; i++)
                 {
-                    var path = await service.GenerateFilePathAsync(metadata, diskNumber: i, chapterNumber: null, ".m4b");
+                    metadata.DiscNumber = i;
+                    var path = await service.GenerateFilePathAsync(metadata, ".m4b");
                     paths.Add(path);
                     
                     // Create the actual directory structure to verify it's valid
@@ -192,7 +196,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - single file audiobook
-            var result = await service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use the simpler FileNamingPattern (no disk number)
             Assert.Contains("Foundation - 1 - Foundation", result);
@@ -225,8 +229,10 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - multi-disc audiobook
-            var disk1 = await service.GenerateFilePathAsync(metadata, diskNumber: 1, chapterNumber: null, ".m4b");
-            var disk2 = await service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: null, ".m4b");
+            metadata.DiscNumber = 1;
+            var disk1 = await service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 2;
+            var disk2 = await service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern with disk numbers
             Assert.Contains("-D01", disk1);
@@ -257,8 +263,10 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - using chapter numbers instead of disk numbers
-            var chapter1 = await service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: 1, ".mp3");
-            var chapter2 = await service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: 2, ".mp3");
+            metadata.TrackNumber = 1;
+            var chapter1 = await service.GenerateFilePathAsync(metadata, ".mp3");
+            metadata.TrackNumber = 2;
+            var chapter2 = await service.GenerateFilePathAsync(metadata, ".mp3");
 
             // Assert - should use MultiFileNamingPattern with chapter numbers
             Assert.Contains("Chapter01", chapter1);
@@ -289,7 +297,9 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - both disk and chapter numbers provided
-            var result = await service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: 5, ".m4b");
+            metadata.DiscNumber = 2;
+            metadata.TrackNumber = 5;
+            var result = await service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern with both numbers
             Assert.Contains("D02", result);

@@ -220,9 +220,9 @@ namespace Listenarr.Api.Services
         // Minimal but safe implementations for newly-added IDownloadService members.
         // These are intentionally conservative placeholders so the service satisfies the
         // interface while the full reprocessing/import workflow is implemented elsewhere.
-        public async Task ProcessCompletedDownloadAsync(string downloadId, string finalPath)
+        public async Task ProcessCompletedDownloadAsync(string downloadId, string downloadPath)
         {
-            _logger.LogInformation("ProcessCompletedDownloadAsync called for {DownloadId} (finalPath: {FinalPath})", downloadId, finalPath);
+            _logger.LogInformation("ProcessCompletedDownloadAsync called for {DownloadId} (finalPath: {FinalPath})", downloadId, downloadPath);
 
             try
             {
@@ -270,7 +270,7 @@ namespace Listenarr.Api.Services
                 try
                 {
                     _logger.LogInformation("Calling CompletedDownloadProcessor for download {DownloadId}", downloadId);
-                    await _completedDownloadProcessor.ProcessCompletedDownloadAsync(downloadId, finalPath);
+                    await _completedDownloadProcessor.ProcessCompletedDownloadAsync(downloadId, downloadPath);
                     _logger.LogInformation("CompletedDownloadProcessor finished for download {DownloadId}", downloadId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {

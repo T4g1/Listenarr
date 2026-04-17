@@ -1,5 +1,3 @@
-using Listenarr.Domain.Models;
-
 namespace Listenarr.Api.Services
 {
     /// <summary>
@@ -171,8 +169,8 @@ namespace Listenarr.Api.Services
         /// Processes a completed download (moves files, updates database, triggers notifications)
         /// </summary>
         /// <param name="downloadId">The download ID to process</param>
-        /// <param name="finalPath">The final file path after processing</param>
-        Task ProcessCompletedDownloadAsync(string downloadId, string finalPath);
+        /// <param name="downloadPath">File or directory where the download file(s) is/are</param>
+        Task ProcessCompletedDownloadAsync(string downloadId, string downloadPath);
 
         /// <summary>
         /// Reprocesses a previously completed download
@@ -214,47 +212,6 @@ namespace Listenarr.Api.Services
         /// </summary>
         /// <param name="downloadId">The download ID to look up</param>
         Task<System.Collections.Generic.List<string>?> GetCachedAnnouncesAsync(string downloadId);
-    }
-
-    /// <summary>
-    /// Provides metadata retrieval and file tagging for audiobook files
-    /// </summary>
-    public interface IMetadataService
-    {
-        /// <summary>
-        /// Gets metadata from online sources
-        /// </summary>
-        /// <param name="title">The audiobook title</param>
-        /// <param name="artist">Optional artist/author name</param>
-        /// <param name="isbn">Optional ISBN</param>
-        /// <returns>Audio metadata or null if not found</returns>
-        Task<AudioMetadata?> GetMetadataAsync(string title, string? artist = null, string? isbn = null);
-
-        /// <summary>
-        /// Extracts metadata from an audio file using ffprobe
-        /// </summary>
-        /// <param name="filePath">Path to the audio file</param>
-        /// <returns>Extracted audio metadata, or null if extraction failed</returns>
-        Task<AudioMetadata?> ExtractFileMetadataAsync(string filePath);
-
-        /// <summary>
-        /// Applies metadata tags to an audio file
-        /// </summary>
-        /// <param name="filePath">Path to the audio file</param>
-        /// <param name="metadata">Metadata to apply</param>
-        Task ApplyMetadataAsync(string filePath, AudioMetadata metadata);
-
-        /// <summary>
-        /// Writes the ASIN to the audio file's embedded tags. No-op if filePath or asin is null/empty.
-        /// </summary>
-        Task WriteAsinTagAsync(string filePath, string asin);
-
-        /// <summary>
-        /// Downloads cover art image from URL
-        /// </summary>
-        /// <param name="coverArtUrl">URL of the cover art image</param>
-        /// <returns>Image data as byte array or null if failed</returns>
-        Task<byte[]?> DownloadCoverArtAsync(string coverArtUrl);
     }
 
     /// <summary>
@@ -482,22 +439,18 @@ namespace Listenarr.Api.Services
         /// Apply the configured file naming pattern to generate the final file path
         /// </summary>
         /// <param name="metadata">Audiobook metadata</param>
-        /// <param name="diskNumber">Optional disk/part number</param>
-        /// <param name="chapterNumber">Optional chapter number</param>
         /// <param name="originalExtension">File extension (e.g., ".m4b", ".mp3")</param>
         /// <returns>Full file path using the naming pattern</returns>
-        Task<string> GenerateFilePathAsync(AudioMetadata metadata, int? diskNumber = null, int? chapterNumber = null, string originalExtension = ".m4b");
+        Task<string> GenerateFilePathAsync(AudioMetadata metadata, string originalExtension = ".m4b");
 
         /// <summary>
         /// Apply the configured file naming pattern to generate the final file path with a specific output path
         /// </summary>
         /// <param name="metadata">Audiobook metadata</param>
         /// <param name="outputPath">Specific output path to use</param>
-        /// <param name="diskNumber">Optional disk/part number</param>
-        /// <param name="chapterNumber">Optional chapter number</param>
         /// <param name="originalExtension">File extension (e.g., ".m4b", ".mp3")</param>
         /// <returns>Full file path using the naming pattern</returns>
-        Task<string> GenerateFilePathAsync(AudioMetadata metadata, string outputPath, int? diskNumber = null, int? chapterNumber = null, string originalExtension = ".m4b");
+        Task<string> GenerateFilePathAsync(AudioMetadata metadata, string outputPath, string originalExtension = ".m4b");
 
         /// <summary>
         /// Parse a naming pattern and replace variables with actual values

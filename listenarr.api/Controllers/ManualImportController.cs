@@ -5,6 +5,7 @@ using System.ComponentModel.DataAnnotations;
 using Listenarr.Domain.Utils;
 using static Listenarr.Domain.Utils.FileUtils;
 using static Listenarr.Api.Services.FileMover;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Controllers;
 

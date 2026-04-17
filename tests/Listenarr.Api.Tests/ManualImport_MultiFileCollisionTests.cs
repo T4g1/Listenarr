@@ -3,6 +3,7 @@ using Moq;
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Tests
 {

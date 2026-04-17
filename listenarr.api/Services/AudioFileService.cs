@@ -6,6 +6,7 @@ using Microsoft.Extensions.Caching.Memory;
 using System.Text.Json;
 using System.IO;
 using Listenarr.Domain.Utils;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Services
 {

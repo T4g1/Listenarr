@@ -1,10 +1,6 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
 using Xunit;
 using Moq;
 using Listenarr.Api.Services;
-using Listenarr.Domain.Models;
 using Microsoft.Extensions.Logging;
 using Listenarr.Domain.Utils;
 
@@ -13,6 +9,7 @@ namespace Listenarr.Api.Tests
     /// <summary>
     /// Tests for FileNamingService automatic pattern selection (single vs multi-file)
     /// </summary>
+    [Trait("Category", "FileNamingService")]
     public class FileNamingService_PatternSelectionTests
     {
         private readonly Mock<IConfigurationService> _mockConfigService;
@@ -47,7 +44,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - no diskNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use FileNamingPattern (simpler naming)
             Assert.Contains("The Gunslinger.m4b", result);
@@ -72,11 +69,12 @@ namespace Listenarr.Api.Tests
             {
                 Title = "The Gunslinger",
                 Artist = "Stephen King",
-                Album = "The Dark Tower"
+                Album = "The Dark Tower",
+                DiscNumber = 3
             };
 
             // Act - with diskNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: 3, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern (with disk number)
             Assert.Contains("The Gunslinger-03.m4b", result);
@@ -98,11 +96,14 @@ namespace Listenarr.Api.Tests
             var metadata = new AudioMetadata
             {
                 Title = "Foundation",
-                Artist = "Isaac Asimov"
+                Artist = "Isaac Asimov",
+                TrackNumber = 12,
+                Year = 1996,
+                SeriesPosition = 3
             };
 
             // Act - with chapterNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: 12, ".mp3");
+            var result = await _service.GenerateFilePathAsync(metadata, ".mp3");
 
             // Assert - should use MultiFileNamingPattern (with chapter number)
             Assert.Contains("Foundation-Chapter12.mp3", result);
@@ -124,11 +125,13 @@ namespace Listenarr.Api.Tests
             var metadata = new AudioMetadata
             {
                 Title = "Dune",
-                Artist = "Frank Herbert"
+                Artist = "Frank Herbert",
+                DiscNumber = 2,
+                TrackNumber = 5
             };
 
             // Act - with both diskNumber and chapterNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: 5, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern and include both numbers
             Assert.Contains("Dune-D02C05.m4b", result);
@@ -154,9 +157,12 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - generate paths for multiple disks
-            var file1 = await _service.GenerateFilePathAsync(metadata, diskNumber: 1, chapterNumber: null, ".m4b");
-            var file2 = await _service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: null, ".m4b");
-            var file3 = await _service.GenerateFilePathAsync(metadata, diskNumber: 3, chapterNumber: null, ".m4b");
+            metadata.DiscNumber = 1;
+            var file1 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 2;
+            var file2 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 3;
+            var file3 = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - all file names should be unique
             Assert.Contains("The Fellowship of the Ring-01.m4b", file1);
@@ -187,8 +193,8 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - generate path multiple times without disk/chapter numbers
-            var file1 = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
-            var file2 = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var file1 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            var file2 = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should produce identical paths (appropriate for single-file audiobooks)
             Assert.Equal(file1, file2);
@@ -216,7 +222,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - should handle empty patterns gracefully
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should produce a valid path
             Assert.NotNull(result);
@@ -242,7 +248,7 @@ namespace Listenarr.Api.Tests
                 Series = "The Dispatcher"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.DoesNotContain(":", result.Substring(2));
             Assert.DoesNotContain("?", result);
@@ -269,7 +275,7 @@ namespace Listenarr.Api.Tests
                 Artist = "CON"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
             var fileName = Path.GetFileName(result);
 
             Assert.Contains($"{Path.DirectorySeparatorChar}CON_{Path.DirectorySeparatorChar}", result);
@@ -312,7 +318,7 @@ namespace Listenarr.Api.Tests
                 Narrator = "George Guidall"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains("The Gunslinger {George Guidall}.m4b", result);
         }
@@ -335,7 +341,7 @@ namespace Listenarr.Api.Tests
                 Artist = "Stephen King"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains("The Gunslinger.m4b", result);
             Assert.DoesNotContain('{', result);
@@ -362,7 +368,7 @@ namespace Listenarr.Api.Tests
                 Narrator = "George Guidall"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains($"Unknown Author{Path.DirectorySeparatorChar}The Gunslinger", result);
             Assert.DoesNotContain($"George Guidall{Path.DirectorySeparatorChar}The Gunslinger", result);
@@ -390,10 +396,86 @@ namespace Listenarr.Api.Tests
                 Asin = "B000FC1R84"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains($"Penguin Audio{Path.DirectorySeparatorChar}English{Path.DirectorySeparatorChar}B000FC1R84", result);
             Assert.Contains("The Gunslinger - Revised Edition - The Dark Tower Begins.m4b", result);
+        }
+
+        [Fact]
+        public async Task GenerateFilePathAsync_WithTrack_NotIncludedInGeneratedPath()
+        {
+            // Arrange
+            var settings = new ApplicationSettings
+            {
+                OutputPath = "/audiobooks",
+                FolderNamingPattern = "{Author}/{Title}",
+                FileNamingPattern = "{Title}",
+                MultiFileNamingPattern = "{Title}-{DiskNumber:00}"
+            };
+            _mockConfigService.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(settings);
+
+            var metadata = new AudioMetadata
+            {
+                Artist = "Isaac Asimov", 
+                Series = "Le Cycle de Fondation", 
+                Title = "Seconde Fondation", 
+                Subtitle = "Le Cycle de Fondation 3", 
+                Edition = "", 
+                Narrator = "Stéphane Ronchewski", 
+                Publisher = "Audiolib", 
+                Language = "french", 
+                Asin = "2367628815", 
+                SeriesPosition = 3, 
+                Year = 2019, 
+                Bitrate = 64238, 
+                DiscNumber = null, 
+                TrackNumber = 31
+            };
+
+            // Act - with chapterNumber provided
+            var result = await _service.GenerateFilePathAsync(metadata, ".mp3");
+
+            // Assert - should use MultiFileNamingPattern (with chapter number)
+            Assert.Contains("Seconde Fondation.mp3", result);
+        }
+
+        [Fact]
+        public async Task GenerateFilePathAsync_WithTrack_IncludeOnlyChapter()
+        {
+            // Arrange
+            var settings = new ApplicationSettings
+            {
+                OutputPath = "/audiobooks",
+                FolderNamingPattern = "{Author}/{Title}",
+                FileNamingPattern = "{Title}",
+                MultiFileNamingPattern = "{Title}-{DiskNumber:00}-{ChapterNumber:00}"
+            };
+            _mockConfigService.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(settings);
+
+            var metadata = new AudioMetadata
+            {
+                Artist = "Isaac Asimov", 
+                Series = "Le Cycle de Fondation", 
+                Title = "Seconde Fondation", 
+                Subtitle = "Le Cycle de Fondation 3", 
+                Edition = "", 
+                Narrator = "Stéphane Ronchewski", 
+                Publisher = "Audiolib", 
+                Language = "french", 
+                Asin = "2367628815", 
+                SeriesPosition = 3, 
+                Year = 2019, 
+                Bitrate = 64238, 
+                DiscNumber = null, 
+                TrackNumber = 31
+            };
+
+            // Act - with chapterNumber provided
+            var result = await _service.GenerateFilePathAsync(metadata, ".mp3");
+
+            // Assert - should use MultiFileNamingPattern (with chapter number)
+            Assert.Contains("Seconde Fondation-31.mp3", result);
         }
     }
 }

@@ -14,6 +14,7 @@ using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Models;
 using Listenarr.Domain.Utils;
 using static Listenarr.Api.Services.FileMover;
+using Listenarr.Api.Services.Metadata;
 
 namespace Listenarr.Api.Services
 {

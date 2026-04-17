@@ -96,24 +96,24 @@ namespace Listenarr.Api.Services
                 }
                 else
                 {
-                var dirInfo = new DirectoryInfo(contentRoot);
+                    var dirInfo = new DirectoryInfo(contentRoot);
 
-                // First pass: search ancestors for any local config at
-                // <ancestor>/config/config.json. This ensures local/test folders
-                // are preferred for isolation and determinism.
-                const int maxDepth = 8;
-                int depth = 0;
-                while (dirInfo != null && depth++ < maxDepth)
-                {
-                    var candidateLocal = Path.Join(dirInfo.FullName, "config", "config.json");
-                    if (File.Exists(candidateLocal))
+                    // First pass: search ancestors for any local config at
+                    // <ancestor>/config/config.json. This ensures local/test folders
+                    // are preferred for isolation and determinism.
+                    const int maxDepth = 8;
+                    int depth = 0;
+                    while (dirInfo != null && depth++ < maxDepth)
                     {
-                        _configPath = candidateLocal;
-                        break;
-                    }
+                        var candidateLocal = Path.Join(dirInfo.FullName, "config", "config.json");
+                        if (File.Exists(candidateLocal))
+                        {
+                            _configPath = candidateLocal;
+                            break;
+                        }
 
-                    dirInfo = dirInfo.Parent;
-                }
+                        dirInfo = dirInfo.Parent;
+                    }
 
                     // Second pass (only if local not found): search for a repository-style
                     // config at <ancestor>/listenarr.api/config/config.json and prefer that.
