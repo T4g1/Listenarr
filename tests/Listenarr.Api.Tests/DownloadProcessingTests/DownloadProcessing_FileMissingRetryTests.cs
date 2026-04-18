@@ -321,6 +321,9 @@ namespace Listenarr.Api.Tests
 
             var metricsMock = new Mock<IAppMetricsService>();
             services.AddSingleton<IAppMetricsService>(metricsMock.Object);
+            
+            services.AddMemoryCache(); 
+            services.AddScoped<IRemotePathMappingService, RemotePathMappingService>();
 
             var loggerMock = new Mock<Microsoft.Extensions.Logging.ILogger<DownloadProcessingBackgroundService>>();
 

@@ -47,7 +47,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - no diskNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use FileNamingPattern (simpler naming)
             Assert.Contains("The Gunslinger.m4b", result);
@@ -76,7 +76,8 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - with diskNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: 3, chapterNumber: null, ".m4b");
+            metadata.DiscNumber = 3;
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern (with disk number)
             Assert.Contains("The Gunslinger-03.m4b", result);
@@ -102,7 +103,8 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - with chapterNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: 12, ".mp3");
+            metadata.TrackNumber = 12;
+            var result = await _service.GenerateFilePathAsync(metadata, ".mp3");
 
             // Assert - should use MultiFileNamingPattern (with chapter number)
             Assert.Contains("Foundation-Chapter12.mp3", result);
@@ -128,7 +130,9 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - with both diskNumber and chapterNumber provided
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: 5, ".m4b");
+            metadata.DiscNumber = 2;
+            metadata.TrackNumber = 5;
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should use MultiFileNamingPattern and include both numbers
             Assert.Contains("Dune-D02C05.m4b", result);
@@ -154,9 +158,12 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - generate paths for multiple disks
-            var file1 = await _service.GenerateFilePathAsync(metadata, diskNumber: 1, chapterNumber: null, ".m4b");
-            var file2 = await _service.GenerateFilePathAsync(metadata, diskNumber: 2, chapterNumber: null, ".m4b");
-            var file3 = await _service.GenerateFilePathAsync(metadata, diskNumber: 3, chapterNumber: null, ".m4b");
+            metadata.DiscNumber = 1;
+            var file1 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 2;
+            var file2 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            metadata.DiscNumber = 3;
+            var file3 = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - all file names should be unique
             Assert.Contains("The Fellowship of the Ring-01.m4b", file1);
@@ -187,8 +194,8 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - generate path multiple times without disk/chapter numbers
-            var file1 = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
-            var file2 = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var file1 = await _service.GenerateFilePathAsync(metadata, ".m4b");
+            var file2 = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should produce identical paths (appropriate for single-file audiobooks)
             Assert.Equal(file1, file2);
@@ -216,7 +223,7 @@ namespace Listenarr.Api.Tests
             };
 
             // Act - should handle empty patterns gracefully
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             // Assert - should produce a valid path
             Assert.NotNull(result);
@@ -242,7 +249,7 @@ namespace Listenarr.Api.Tests
                 Series = "The Dispatcher"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.DoesNotContain(":", result.Substring(2));
             Assert.DoesNotContain("?", result);
@@ -269,7 +276,7 @@ namespace Listenarr.Api.Tests
                 Artist = "CON"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
             var fileName = Path.GetFileName(result);
 
             Assert.Contains($"{Path.DirectorySeparatorChar}CON_{Path.DirectorySeparatorChar}", result);
@@ -312,7 +319,7 @@ namespace Listenarr.Api.Tests
                 Narrator = "George Guidall"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains("The Gunslinger {George Guidall}.m4b", result);
         }
@@ -335,7 +342,7 @@ namespace Listenarr.Api.Tests
                 Artist = "Stephen King"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains("The Gunslinger.m4b", result);
             Assert.DoesNotContain('{', result);
@@ -362,7 +369,7 @@ namespace Listenarr.Api.Tests
                 Narrator = "George Guidall"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains($"Unknown Author{Path.DirectorySeparatorChar}The Gunslinger", result);
             Assert.DoesNotContain($"George Guidall{Path.DirectorySeparatorChar}The Gunslinger", result);
@@ -390,7 +397,7 @@ namespace Listenarr.Api.Tests
                 Asin = "B000FC1R84"
             };
 
-            var result = await _service.GenerateFilePathAsync(metadata, diskNumber: null, chapterNumber: null, ".m4b");
+            var result = await _service.GenerateFilePathAsync(metadata, ".m4b");
 
             Assert.Contains($"Penguin Audio{Path.DirectorySeparatorChar}English{Path.DirectorySeparatorChar}B000FC1R84", result);
             Assert.Contains("The Gunslinger - Revised Edition - The Dark Tower Begins.m4b", result);

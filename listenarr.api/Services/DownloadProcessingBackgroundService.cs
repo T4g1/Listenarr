@@ -17,9 +17,7 @@
  */
 
 using System.Runtime.InteropServices;
-using Listenarr.Domain.Models;
 using Microsoft.EntityFrameworkCore;
-using System.Linq;
 using Listenarr.Infrastructure.Models;
 using Listenarr.Domain.Utils;
 
@@ -502,21 +500,16 @@ namespace Listenarr.Api.Services
                 {
                     job.AddLogEntry("Using file naming service for destination path");
 
-                    // Build metadata for naming - get download info from database
                     var metadata = new AudioMetadata { Title = "Unknown Title" };
-                    // When possible we'll build a namingMetadata from the linked Audiobook to ensure
-                    // audiobook fields are authoritative for naming (avoid extracted tags overwriting them).
-                    AudioMetadata? namingMetadata = null;
 
+                    // Retrieve metadata from the download/audiobook in DB
                     using var scope = _serviceScopeFactory.CreateScope();
                     var dbContext = scope.ServiceProvider.GetRequiredService<ListenArrDbContext>();
                     var download = await dbContext.Downloads.FindAsync(job.DownloadId);
                     if (download != null)
                     {
                         // Start with values from the download record
-                        metadata.Title = download.Title ?? metadata.Title;
-                        metadata.Artist = download.Artist ?? string.Empty;
-                        metadata.Album = download.Album ?? string.Empty;
+                        metadata.Update(new AudioMetadata { Title = download.Title ?? string.Empty, Artist = download.Artist ?? string.Empty, Album = download.Album ?? string.Empty });
                         job.AddLogEntry($"Using download metadata: {metadata.Title} by {metadata.Artist}");
 
                         // If the download is linked to an Audiobook, prefer its metadata for naming
@@ -527,92 +520,43 @@ namespace Listenarr.Api.Services
                                 var audiobook = await dbContext.Audiobooks.FindAsync(download.AudiobookId);
                                 if (audiobook != null)
                                 {
-                                    // Create a naming-only metadata object from the Audiobook. This will be
-                                    // used as the authoritative source for file naming fields.
-                                    var fallbackAuthor = !string.IsNullOrWhiteSpace(metadata.Artist) &&
-                                        !string.Equals(metadata.Artist.Trim(), metadata.Narrator?.Trim(), StringComparison.OrdinalIgnoreCase)
-                                            ? metadata.Artist
-                                            : (!string.IsNullOrWhiteSpace(metadata.AlbumArtist) &&
-                                               !string.Equals(metadata.AlbumArtist.Trim(), metadata.Narrator?.Trim(), StringComparison.OrdinalIgnoreCase)
-                                                ? metadata.AlbumArtist
-                                                : "Unknown Author");
+                                    metadata.Update(audiobook.CreateBasicAudioMetadata());
 
-                                    namingMetadata = new AudioMetadata
-                                    {
-                                        Title = audiobook.Title ?? metadata.Title,
-                                        Subtitle = !string.IsNullOrWhiteSpace(audiobook.Subtitle) ? audiobook.Subtitle : metadata.Subtitle,
-                                        Edition = !string.IsNullOrWhiteSpace(audiobook.Edition) ? audiobook.Edition : metadata.Edition,
-                                        Artist = (audiobook.Authors != null && audiobook.Authors.Any()) ? string.Join(", ", audiobook.Authors) : fallbackAuthor,
-                                        AlbumArtist = (audiobook.Authors != null && audiobook.Authors.Any()) ? string.Join(", ", audiobook.Authors) : fallbackAuthor,
-                                        Narrator = (audiobook.Narrators != null && audiobook.Narrators.Any())
-                                            ? string.Join(", ", audiobook.Narrators.Where(n => !string.IsNullOrWhiteSpace(n)))
-                                            : metadata.Narrator,
-                                        Publisher = !string.IsNullOrWhiteSpace(audiobook.Publisher) ? audiobook.Publisher : metadata.Publisher,
-                                        Language = !string.IsNullOrWhiteSpace(audiobook.Language) ? audiobook.Language : metadata.Language,
-                                        Asin = !string.IsNullOrWhiteSpace(audiobook.Asin) ? audiobook.Asin : metadata.Asin,
-                                        Series = audiobook.Series,
-                                        // Prefer audiobook's publish year when available
-                                        Year = int.TryParse(audiobook.PublishYear, out var py) ? py : (int?)null,
-                                        // Series position / number
-                                        SeriesPosition = !string.IsNullOrWhiteSpace(audiobook.SeriesNumber) && decimal.TryParse(audiobook.SeriesNumber, out var sp) ? sp : (decimal?)null,
-                                        // Quality string from audiobook record
-                                        // Map into Bitrate/Format heuristically if useful; for now store textual quality
-                                        // We'll put it into AdditionalData so FileNamingService can use Format/Bitrate/Quality
-                                        AdditionalData = new Dictionary<string, object> { { "Quality", audiobook.Quality ?? string.Empty } }
-                                    };
-
-                                    job.AddLogEntry($"Using audiobook metadata for naming: {namingMetadata.Title} by {namingMetadata.Artist}");
+                                    job.AddLogEntry($"Using audiobook metadata for naming: {metadata.Title} by {metadata.Artist}");
                                 }
                             }
                             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
                                 job.AddLogEntry($"Failed to retrieve audiobook metadata: {ex.Message}");
                             }
                         }
+
+                        // Create a fall back author based on download informations in case there is none from the audiobook
+                        var fallbackAuthor = !string.IsNullOrWhiteSpace(metadata.Artist) &&
+                            !string.Equals(metadata.Artist.Trim(), metadata.Narrator?.Trim(), StringComparison.OrdinalIgnoreCase)
+                                ? metadata.Artist
+                                : (!string.IsNullOrWhiteSpace(metadata.AlbumArtist) &&
+                                    !string.Equals(metadata.AlbumArtist.Trim(), metadata.Narrator?.Trim(), StringComparison.OrdinalIgnoreCase)
+                                    ? metadata.AlbumArtist
+                                    : "Unknown Author");
+                        
+                        metadata.Update(new AudioMetadata { Artist = fallbackAuthor, AlbumArtist = fallbackAuthor });
                     }
 
-                    // Only extract file metadata for naming when we do NOT have audiobook naming metadata.
-                    // If the download is linked to an audiobook (namingMetadata != null) we must not use
-                    // file-embedded tags for naming Ã¢â‚¬â€ the audiobook DB entry is authoritative.
-                    if (namingMetadata == null && metadataService != null)
+                    // Retrieve metadata from the file using external service
+                    if (metadataService != null)
                     {
                         try
                         {
                             // Log source state immediately before attempting the file operation for diagnostics
-                            try
-                            {
-                                var exists = File.Exists(sourcePath);
-                                var size = exists ? new FileInfo(sourcePath).Length : (long?)null;
-                                var last = exists ? File.GetLastWriteTimeUtc(sourcePath).ToString("o") : "(not found)";
-                                job.AddLogEntry($"Operation pre-check: sourceExists={exists}, size={(size.HasValue ? size.ToString() : "(n/a)")}, lastWriteUtc={last}");
-                            }
-                            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
-                                job.AddLogEntry($"Failed to collect source diagnostics: {ex.Message}");
-                            }
+                            var exists = File.Exists(sourcePath);
+                            var size = exists ? new FileInfo(sourcePath).Length : (long?)null;
+                            var last = exists ? File.GetLastWriteTimeUtc(sourcePath).ToString("o") : "(not found)";
+                            job.AddLogEntry($"Operation pre-check: sourceExists={exists}, size={(size.HasValue ? size.ToString() : "(n/a)")}, lastWriteUtc={last}");
+
                             var extractedMetadata = await metadataService.ExtractFileMetadataAsync(sourcePath);
                             if (extractedMetadata != null)
                             {
-                                // No audiobook naming metadata - merge extracted values without overwriting
-                                string FirstNonEmpty(params string?[] candidates)
-                                {
-                                    return candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c)) ?? string.Empty;
-                                }
-
-                                metadata.Title = FirstNonEmpty(metadata.Title, extractedMetadata.Title, "Unknown Title");
-                                metadata.Artist = FirstNonEmpty(metadata.Artist, extractedMetadata.Artist, extractedMetadata.AlbumArtist, metadata.Artist);
-                                metadata.Album = FirstNonEmpty(metadata.Album, extractedMetadata.Album, metadata.Album);
-
-                                if (!metadata.SeriesPosition.HasValue && extractedMetadata.SeriesPosition.HasValue)
-                                    metadata.SeriesPosition = extractedMetadata.SeriesPosition;
-                                if (!metadata.TrackNumber.HasValue && extractedMetadata.TrackNumber.HasValue)
-                                    metadata.TrackNumber = extractedMetadata.TrackNumber;
-                                if (!metadata.DiscNumber.HasValue && extractedMetadata.DiscNumber.HasValue)
-                                    metadata.DiscNumber = extractedMetadata.DiscNumber;
-                                if (!metadata.Year.HasValue && extractedMetadata.Year.HasValue)
-                                    metadata.Year = extractedMetadata.Year;
-                                if (!metadata.Bitrate.HasValue && extractedMetadata.Bitrate.HasValue)
-                                    metadata.Bitrate = extractedMetadata.Bitrate;
-                                if (string.IsNullOrWhiteSpace(metadata.Format) && !string.IsNullOrWhiteSpace(extractedMetadata.Format))
-                                    metadata.Format = extractedMetadata.Format;
+                                metadata.Update(extractedMetadata);
 
                                 job.AddLogEntry($"Merged extracted metadata: {metadata.Title} by {metadata.Artist}");
                             }
@@ -622,29 +566,8 @@ namespace Listenarr.Api.Services
                         }
                     }
 
-                    // Generate path using naming pattern
-                    // Use namingMetadata if present (authoritative audiobook fields), otherwise use metadata
-                    var metadataForNaming = namingMetadata ?? metadata;
+                    job.AddLogEntry($"Resolved naming metadata: Author='{metadata.Artist}', AlbumArtist='{metadata.AlbumArtist}', Series='{metadata.Series}', Title='{metadata.Title}', Year='{metadata.Year}'");
 
-                    // Log naming variables for diagnostics
-                    try
-                    {
-                        var dbgVars = $"Author={(metadataForNaming.Artist ?? "(null)")}, Series={(metadataForNaming.Series ?? "(null)")}, Title={(metadataForNaming.Title ?? "(null)")}";
-                        job.AddLogEntry($"Resolved naming metadata: {dbgVars}");
-                    }
-                    catch (Exception caughtEx_1) when (caughtEx_1 is not OperationCanceledException && caughtEx_1 is not OutOfMemoryException && caughtEx_1 is not StackOverflowException) { 
-                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                    }
-
-                    // Record the resolved naming metadata on the job for diagnostics
-                    try
-                    {
-                        job.AddLogEntry($"Resolved naming metadata: Author='{metadataForNaming.Artist}', AlbumArtist='{metadataForNaming.AlbumArtist}', Series='{metadataForNaming.Series}', Title='{metadataForNaming.Title}', Year='{metadataForNaming.Year}'");
-                    }
-                    catch (Exception caughtEx_2) when (caughtEx_2 is not OperationCanceledException && caughtEx_2 is not OutOfMemoryException && caughtEx_2 is not StackOverflowException) {
-                        // ignore logging errors
-                                            System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                    }
                     // For processing jobs, compute the appropriate destination directory first.
                     // If the download is linked to an audiobook and the audiobook has a BasePath,
                     // prefer that as the base directory (and use filename-only pattern in those
@@ -683,7 +606,7 @@ namespace Listenarr.Api.Services
                     // so we can compute the destination directory. We'll not actually apply the
                     // full pattern on the source; instead we will place the file into destDir
                     // using original filename first.
-                    var generatedPath = await fileNamingService.GenerateFilePathAsync(metadataForNaming, basePathForFile, null, null, ext);
+                    var generatedPath = await fileNamingService.GenerateFilePathAsync(metadata, basePathForFile, ext);
 
                     // Preserve subdirectories from the generated path. The naming pattern may include
                     // subfolders (e.g. {Author}/{Series}/...). If the generatedPath is rooted, use it

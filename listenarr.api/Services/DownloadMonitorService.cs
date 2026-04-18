@@ -1909,7 +1909,7 @@ namespace Listenarr.Api.Services
                         }
 
                         var ext = Path.GetExtension(sourceFile);
-                        var generatedPath = await fileNaming.GenerateFilePathAsync(metadata, null, null, ext);
+                        var generatedPath = await fileNaming.GenerateFilePathAsync(metadata, ext);
 
                         // Ensure the file goes directly to OutputPath (root folder) without subdirectories
                         var outRoot = settings.OutputPath;

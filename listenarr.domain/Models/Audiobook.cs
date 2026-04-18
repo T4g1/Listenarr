@@ -81,6 +81,37 @@ namespace Listenarr.Domain.Models
 
         // Automatic search tracking
         public DateTime? LastSearchTime { get; set; }
+
+        /// <summary>
+        /// Create AudioMetadata from the Audiobook as a basic metadata for imported files
+        /// </summary>
+        /// <returns>AudioMetada based on the audiobook retrieved metadata</returns>
+        public AudioMetadata CreateBasicAudioMetadata()
+        {
+            return new AudioMetadata
+            {
+                Title = Title ?? string.Empty,
+                Subtitle = Subtitle,
+                Edition = Edition,
+                Artist = (Authors != null && Authors.Any()) ? string.Join(", ", Authors) : string.Empty,
+                AlbumArtist = (Authors != null && Authors.Any()) ? string.Join(", ", Authors) : string.Empty,
+                Narrator = (Narrators != null && Narrators.Any())
+                    ? string.Join(", ", Narrators.Where(n => !string.IsNullOrWhiteSpace(n)))
+                    : null,
+                Publisher = !string.IsNullOrWhiteSpace(Publisher) ? Publisher : null,
+                Language = !string.IsNullOrWhiteSpace(Language) ? Language : null,
+                Asin = !string.IsNullOrWhiteSpace(Asin) ? Asin : null,
+                Series = Series,
+                // Prefer audiobook's publish year when available
+                Year = int.TryParse(PublishYear, out var py) ? py : (int?)null,
+                // Series position / number
+                SeriesPosition = !string.IsNullOrWhiteSpace(SeriesNumber) && decimal.TryParse(SeriesNumber, out var sp) ? sp : (decimal?)null,
+                // Quality string from audiobook record
+                // Map into Bitrate/Format heuristically if useful; for now store textual quality
+                // We'll put it into AdditionalData so FileNamingService can use Format/Bitrate/Quality
+                AdditionalData = new Dictionary<string, object> { { "Quality", Quality ?? string.Empty } }
+            };
+        }
     }
 }
 
