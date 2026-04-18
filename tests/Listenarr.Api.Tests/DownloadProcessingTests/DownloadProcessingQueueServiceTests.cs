@@ -10,6 +10,7 @@ using Listenarr.Domain.Utils;
 namespace Listenarr.Api.Tests
 {
     [Trait("Area", "ProcessingQueueRecovery")]
+    [Trait("Category", "DownloadProcessing")]
     public class DownloadProcessingQueueServiceTests
     {
         [Fact]

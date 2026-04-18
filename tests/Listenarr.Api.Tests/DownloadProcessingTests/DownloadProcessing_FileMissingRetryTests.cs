@@ -1,17 +1,13 @@
-﻿using System;
-using System.IO;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
 using Listenarr.Api.Services;
-using Listenarr.Domain.Models;
 
 namespace Listenarr.Api.Tests
 {
+    [Trait("Category", "DownloadProcessing")]
     public class DownloadProcessing_FileMissingRetryTests
     {
         [Fact]
@@ -238,6 +234,7 @@ namespace Listenarr.Api.Tests
         }
 
         [Fact]
+        [Trait("Method", "ProcessMoveOrCopyJobAsync")]
         public async Task ProcessMoveOrCopy_DirectorySource_UsesClientReportedFilesToExcludeUnrelatedFiles()
         {
             var dbOptions = new DbContextOptionsBuilder<ListenArrDbContext>()

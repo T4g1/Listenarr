@@ -15,6 +15,7 @@ using Listenarr.Api.Hubs;
 
 namespace Listenarr.Api.Tests
 {
+    [Trait("Category", "DownloadProcessing")]
     public class DownloadProcessing_NoDoubleMoveTests
     {
         private static void TryDeletePath(string path, bool directory)

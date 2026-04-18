@@ -1098,6 +1098,14 @@ namespace Listenarr.Api.Services
             }
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="job"></param>
+        /// <param name="scope"></param>
+        /// <param name="importableFiles">Files found by Linstenarr</param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
         private async Task<List<string>> FilterToClientReportedFilesAsync(
             DownloadProcessingJob job,
             IServiceScope scope,
@@ -1108,8 +1116,9 @@ namespace Listenarr.Api.Services
             {
                 var dbContext = scope.ServiceProvider.GetService<ListenArrDbContext>();
                 var importResolver = scope.ServiceProvider.GetService<IImportItemResolutionService>();
+                var remotePathMappingService = scope.ServiceProvider.GetService<IRemotePathMappingService>();
 
-                if (dbContext == null || importResolver == null)
+                if (dbContext == null || importResolver == null || remotePathMappingService == null)
                 {
                     return importableFiles;
                 }
@@ -1132,25 +1141,31 @@ namespace Listenarr.Api.Services
                     DownloadClientId = download.DownloadClientId
                 };
 
-                var resolvedItem = await importResolver.ResolveImportItemAsync(
+                var downloadClientItem = await importResolver.ResolveImportItemAsync(
                     download,
                     preliminaryItem,
                     previousAttempt: null,
                     cancellationToken);
 
-                if (resolvedItem.SourceFiles == null || resolvedItem.SourceFiles.Count == 0)
+                if (downloadClientItem.SourceFiles == null || downloadClientItem.SourceFiles.Count == 0)
                 {
                     return importableFiles;
                 }
 
                 var allowedFiles = new HashSet<string>(
-                    resolvedItem.SourceFiles
+                    downloadClientItem.SourceFiles
                         .Where(path => !string.IsNullOrWhiteSpace(path))
                         .Select(path => FileUtils.NormalizeStoredPath(path)),
                     StringComparer.OrdinalIgnoreCase);
 
+                // Apply remote path mapping
+                var translationTasks = allowedFiles
+                    .Select(path => remotePathMappingService.TranslatePathAsync(download.DownloadClientId, path));
+                    
+                var tranlatedAllowedFiles = await Task.WhenAll(translationTasks);
+
                 var filteredFiles = importableFiles
-                    .Where(path => allowedFiles.Contains(FileUtils.NormalizeStoredPath(path)))
+                    .Where(tranlatedAllowedFiles.Contains)
                     .ToList();
 
                 if (filteredFiles.Count == 0)
@@ -1160,7 +1175,6 @@ namespace Listenarr.Api.Services
                         allowedFiles.Count,
                         job.DownloadId,
                         job.SourcePath);
-                    return importableFiles;
                 }
 
                 _logger.LogInformation(
