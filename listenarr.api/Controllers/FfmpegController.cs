@@ -1,14 +1,6 @@
-﻿using System.IO;
-using System.Threading.Tasks;
+﻿using Listenarr.Api.Models;
 using Listenarr.Api.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using System.Text.Json;
-using System.Runtime.InteropServices;
-using System;
-
-public class FfprobeScanRequest { public string? FilePath { get; set; } }
 
 namespace Listenarr.Api.Controllers
 {
@@ -38,16 +30,10 @@ namespace Listenarr.Api.Controllers
             var gate = SensitiveEndpointAccessGuard.RequireLocalOrAdmin(HttpContext, _logger, "ffmpeg/info");
             if (gate != null) return gate;
 
-            var path = await _ffmpegService.GetFfprobePathAsync(false);
-            var baseDir = Path.Join(Directory.GetCurrentDirectory(), "config", "ffmpeg");
-            var licensePath = Path.Join(baseDir, "LICENSE_NOTICE.txt");
-            string license = string.Empty;
-            if (System.IO.File.Exists(licensePath))
-            {
-                license = await System.IO.File.ReadAllTextAsync(licensePath);
-            }
-
-            return Ok(new { ffprobePath = path, licenseNotice = license });
+            return Ok(new {
+                ffprobePath = await _ffmpegService.GetFfprobePathAsync(), 
+                licenseNotice = await _ffmpegService.GetLicenseAsync() 
+            });
         }
 
         /// <summary>
@@ -91,58 +77,22 @@ namespace Listenarr.Api.Controllers
             {
                 return NotFound(new { message = "File not found" });
             }
-
-            var ffprobeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
-            var ffprobePath = Path.Join(Directory.GetCurrentDirectory(), "config", "ffmpeg", ffprobeName);
-
+            
+            string? ffprobePath = await _ffmpegService.GetFfprobePathAsync();
+            if (ffprobePath == null)
+            {
+                _logger.LogWarning("IProcessRunner is not available; cannot run ffprobe for {File}", LogRedaction.SanitizeFilePath(filePath));
+                return StatusCode(500, new { message = "IProcessRunner service is not available to run external processes" });
+            }
+            
             try
             {
-                _logger.LogInformation("Running bundled ffprobe at {Path} against file {File}", ffprobePath, filePath);
-
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = ffprobePath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                startInfo.ArgumentList.Add("-v");
-                startInfo.ArgumentList.Add("quiet");
-                startInfo.ArgumentList.Add("-print_format");
-                startInfo.ArgumentList.Add("json");
-                startInfo.ArgumentList.Add("-show_format");
-                startInfo.ArgumentList.Add("-show_streams");
-                startInfo.ArgumentList.Add(filePath);
-
-                if (_processRunner != null)
-                {
-                    var pr = await _processRunner.RunAsync(startInfo, 10000);
-                    _logger.LogInformation("ffprobe exit code {Code} for file {File}; stderr length={Len}", pr.ExitCode, LogRedaction.SanitizeFilePath(filePath), pr.Stderr?.Length ?? 0);
-
-                    object? parsed = null;
-                    if (!string.IsNullOrEmpty(pr.Stdout))
-                    {
-                        try { parsed = JsonSerializer.Deserialize<JsonElement>(pr.Stdout); }
-                        catch (Exception jex) when (jex is not OperationCanceledException && jex is not OutOfMemoryException && jex is not StackOverflowException) { _logger.LogDebug(jex, "Failed to parse ffprobe JSON output for {File}", LogRedaction.SanitizeFilePath(filePath)); }
-                    }
-
-                    return Ok(new { ffprobePath, exitCode = pr.ExitCode, stdout = pr.Stdout, stderr = pr.Stderr, parsed });
-                }
-                else
-                {
-                    _logger.LogWarning("IProcessRunner is not available; cannot run ffprobe for {File}", LogRedaction.SanitizeFilePath(filePath));
-                    return StatusCode(500, new { message = "IProcessRunner service is not available to run external processes" });
-                }
+                object result = await _ffmpegService.RunFfprobeAsync(filePath);
+                return Ok(new { ffprobePath, result });
             }
-            catch (System.ComponentModel.Win32Exception wex)
+            catch(FfmpegException ex)
             {
-                _logger.LogWarning(wex, "ffprobe execution failed for {File}", LogRedaction.SanitizeFilePath(filePath));
-                return StatusCode(500, new { message = "ffprobe execution failed", error = wex.Message });
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
-                _logger.LogError(ex, "Error running ffprobe for {File}", LogRedaction.SanitizeFilePath(filePath));
-                return StatusCode(500, new { message = "Error running ffprobe", error = ex.Message });
+                return StatusCode(500, new { message = ex.ToString(), error = ex });
             }
         }
     }

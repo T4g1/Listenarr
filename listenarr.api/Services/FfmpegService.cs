@@ -11,19 +11,24 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using System.Threading;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace Listenarr.Api.Services
 {
-    public class FfmpegInstallerService : IFfmpegService
+    public class FfmpegService : IFfmpegService
     {
-        private readonly ILogger<FfmpegInstallerService> _logger;
+        private readonly string _baseDir;
+        private readonly string _ffprobeName;
+        private readonly string _ffprobePath;
+        private readonly ILogger<FfmpegService> _logger;
         private readonly HttpClient _httpClient;
         private readonly IStartupConfigService _startupConfigService;
         private readonly IProcessRunner? _processRunner;
         // Allow disabling auto-download via environment variable
         private readonly bool _autoInstall;
 
-        public FfmpegInstallerService(ILogger<FfmpegInstallerService> logger, IStartupConfigService startupConfigService, IProcessRunner? processRunner = null)
+        public FfmpegService(ILogger<FfmpegService> logger, IStartupConfigService startupConfigService, IProcessRunner? processRunner = null)
         {
             _logger = logger;
             _httpClient = new HttpClient();
@@ -41,6 +46,10 @@ namespace Listenarr.Api.Services
             _autoInstall = Environment.GetEnvironmentVariable("LISTENARR_AUTO_INSTALL_FFPROBE")?.ToLower() != "false"; // default true
             _startupConfigService = startupConfigService;
             _processRunner = processRunner;
+            
+            _baseDir = Path.Join(AppContext.BaseDirectory, "config", "ffmpeg");
+            _ffprobeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
+            _ffprobePath = Path.Join(_baseDir, _ffprobeName);
         }
 
         private static async Task TryDeleteFileAsync(string path, int retries = 3, int delayMs = 100, CancellationToken cancellationToken = default)
@@ -104,21 +113,15 @@ namespace Listenarr.Api.Services
         /// Return the ffprobe path if it exists in the configured bundled directory. This method
         /// does NOT attempt to download or install ffprobe.
         /// </summary>
-        public Task<string?> GetFfprobePathAsync(bool ensureInstalled = false)
+        public Task<string?> GetFfprobePathAsync()
         {
-            var baseDir = Path.Join(AppContext.BaseDirectory, "config", "ffmpeg");
-            Directory.CreateDirectory(baseDir);
-
-            var ffprobeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
-            var ffprobePath = Path.Join(baseDir, ffprobeName);
-
-            if (File.Exists(ffprobePath))
+            if (File.Exists(_ffprobePath))
             {
-                _logger.LogInformation("Found bundled ffprobe at {Path}", ffprobePath);
-                return Task.FromResult<string?>(ffprobePath);
+                _logger.LogInformation("Found bundled ffprobe at {Path}", _ffprobePath);
+                return Task.FromResult<string?>(_ffprobePath);
             }
 
-            _logger.LogInformation("No bundled ffprobe found at {Path}", ffprobePath);
+            _logger.LogInformation("No bundled ffprobe found at {Path}", _ffprobePath);
             return Task.FromResult<string?>(null);
         }
 
@@ -128,16 +131,9 @@ namespace Listenarr.Api.Services
         /// </summary>
         public async Task<string?> EnsureFfprobeInstalledAsync()
         {
-            var baseDir = Path.Join(AppContext.BaseDirectory, "config", "ffmpeg");
-            Directory.CreateDirectory(baseDir);
-
-            var ffprobeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffprobe.exe" : "ffprobe";
-            var ffprobePath = Path.Join(baseDir, ffprobeName);
-
-            if (File.Exists(ffprobePath))
+            if (await GetFfprobePathAsync() == null)
             {
-                _logger.LogInformation("Found bundled ffprobe at {Path}", ffprobePath);
-                return ffprobePath;
+                return _ffprobePath;
             }
 
             if (!_autoInstall)
@@ -145,6 +141,8 @@ namespace Listenarr.Api.Services
                 _logger.LogInformation("Auto-install of ffprobe is disabled via LISTENARR_AUTO_INSTALL_FFPROBE");
                 return null;
             }
+
+            Directory.CreateDirectory(_baseDir);
 
             try
             {
@@ -188,7 +186,7 @@ namespace Listenarr.Api.Services
                 using var resp = await _httpClient.GetAsync(downloadUrl);
                 resp.EnsureSuccessStatusCode();
 
-                var tmpFile = Path.Join(baseDir, "ffprobe-download.tmp");
+                var tmpFile = Path.Join(_baseDir, "ffprobe-download.tmp");
                 await using (var fs = new FileStream(tmpFile, FileMode.Create, FileAccess.Write))
                 {
                     await resp.Content.CopyToAsync(fs);
@@ -220,8 +218,8 @@ namespace Listenarr.Api.Services
                 {
                     try
                     {
-                        var checksumFiles = Directory.GetFiles(baseDir, "*checksum*", SearchOption.TopDirectoryOnly)
-                            .Concat(Directory.GetFiles(baseDir, "SHA256*", SearchOption.TopDirectoryOnly));
+                        var checksumFiles = Directory.GetFiles(_baseDir, "*checksum*", SearchOption.TopDirectoryOnly)
+                            .Concat(Directory.GetFiles(_baseDir, "SHA256*", SearchOption.TopDirectoryOnly));
                         foreach (var cf in checksumFiles)
                         {
                             try
@@ -250,7 +248,7 @@ namespace Listenarr.Api.Services
                 if (downloadUrl.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || downloadUrl.EndsWith(".ffmpeg.zip", StringComparison.OrdinalIgnoreCase))
                 {
                     using var archive = SharpCompress.Archives.Zip.ZipArchive.Open(tmpFile);
-                    var baseRoot = Path.GetFullPath(baseDir);
+                    var baseRoot = Path.GetFullPath(_baseDir);
                     foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
                     {
                         var entryPath = entry.Key ?? string.Empty;
@@ -260,7 +258,7 @@ namespace Listenarr.Api.Services
                             continue;
                         }
 
-                        Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? baseDir);
+                        Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? _baseDir);
                         entry.WriteToFile(outPath, new ExtractionOptions() { ExtractFullPath = true, Overwrite = true });
                         _logger.LogDebug("Extracted archive entry to {OutPath}", outPath);
                     }
@@ -273,7 +271,7 @@ namespace Listenarr.Api.Services
                         using var stream = File.OpenRead(tmpFile);
                         var readerOptions = new ReaderOptions { LeaveStreamOpen = false };
                         using var reader = ReaderFactory.Open(stream, readerOptions);
-                        var baseRoot = Path.GetFullPath(baseDir);
+                        var baseRoot = Path.GetFullPath(_baseDir);
                         while (reader.MoveToNextEntry())
                         {
                             if (!reader.Entry.IsDirectory)
@@ -285,7 +283,7 @@ namespace Listenarr.Api.Services
                                     continue;
                                 }
 
-                                Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? baseDir);
+                                Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? _baseDir);
                                 using var entryStream = reader.OpenEntryStream();
                                 await using var outFs = File.Create(outPath);
                                 await entryStream.CopyToAsync(outFs);
@@ -301,7 +299,7 @@ namespace Listenarr.Api.Services
                             var psi = new System.Diagnostics.ProcessStartInfo
                             {
                                 FileName = "tar",
-                                Arguments = $"-xf \"{tmpFile}\" -C \"{baseDir}\"",
+                                Arguments = $"-xf \"{tmpFile}\" -C \"{_baseDir}\"",
                                 RedirectStandardOutput = true,
                                 RedirectStandardError = true,
                                 UseShellExecute = false,
@@ -326,14 +324,14 @@ namespace Listenarr.Api.Services
                 }
                 else
                 {
-                    File.Move(tmpFile, ffprobePath);
+                    File.Move(tmpFile, _ffprobePath);
                 }
 
                 if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
                     try
                     {
-                        var candidates = Directory.GetFiles(baseDir, "ffprobe*", SearchOption.AllDirectories);
+                        var candidates = Directory.GetFiles(_baseDir, "ffprobe*", SearchOption.AllDirectories);
                         foreach (var cand in candidates)
                         {
                             try
@@ -373,19 +371,18 @@ namespace Listenarr.Api.Services
                     var candidates = new List<string>();
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                     {
-                        candidates.AddRange(Directory.GetFiles(baseDir, "ffprobe.exe", SearchOption.AllDirectories));
+                        candidates.AddRange(Directory.GetFiles(_baseDir, "ffprobe.exe", SearchOption.AllDirectories));
                     }
                     else
                     {
-                        candidates.AddRange(Directory.GetFiles(baseDir, "ffprobe", SearchOption.AllDirectories));
+                        candidates.AddRange(Directory.GetFiles(_baseDir, "ffprobe", SearchOption.AllDirectories));
                         // include any file names that contain ffprobe (fallback)
-                        candidates.AddRange(Directory.EnumerateFiles(baseDir, "*ffprobe*", SearchOption.AllDirectories));
+                        candidates.AddRange(Directory.EnumerateFiles(_baseDir, "*ffprobe*", SearchOption.AllDirectories));
                     }
 
                     // Prefer exact filename matches, and prefer those located in a 'bin' directory
                     string? chosen = null;
-                    var ffprobeFileName = ffprobeName; // ffprobe.exe or ffprobe
-                    var exactMatches = candidates.Where(p => string.Equals(Path.GetFileName(p), ffprobeFileName, StringComparison.OrdinalIgnoreCase)).ToList();
+                    var exactMatches = candidates.Where(p => string.Equals(Path.GetFileName(p), _ffprobeName, StringComparison.OrdinalIgnoreCase)).ToList();
                     if (exactMatches.Any())
                     {
                         // Prefer candidates with '/bin/' in the path (common for ffmpeg archives)
@@ -399,11 +396,11 @@ namespace Listenarr.Api.Services
 
                     if (!string.IsNullOrEmpty(chosen))
                     {
-                        var dest = ffprobePath;
+                        var dest = _ffprobePath;
                         try
                         {
                             // Ensure destination directory exists
-                            Directory.CreateDirectory(Path.GetDirectoryName(dest) ?? baseDir);
+                            Directory.CreateDirectory(Path.GetDirectoryName(dest) ?? _baseDir);
 
                             var chosenFull = Path.GetFullPath(chosen);
                             var destFull = Path.GetFullPath(dest);
@@ -470,23 +467,23 @@ namespace Listenarr.Api.Services
                             }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
-                            _logger.LogWarning(ex, "Failed to move or copy ffprobe candidate {Src} to {Dest}", chosen, ffprobePath);
+                            _logger.LogWarning(ex, "Failed to move or copy ffprobe candidate {Src} to {Dest}", chosen, _ffprobePath);
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("No ffprobe binary found in extracted files under {BaseDir}", baseDir);
+                        _logger.LogInformation("No ffprobe binary found in extracted files under {BaseDir}", _baseDir);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
                     _logger.LogDebug(ex, "Non-fatal error while locating/copying ffprobe from extracted files");
                 }
 
-                var licensePath = Path.Join(baseDir, "LICENSE_NOTICE.txt");
+                var licensePath = Path.Join(_baseDir, "LICENSE_NOTICE.txt");
                 await File.WriteAllTextAsync(licensePath, "ffprobe binaries downloaded. Review FFmpeg licensing (LGPL/GPL) at https://ffmpeg.org/legal.html\nSource: " + downloadUrl + "\n");
 
-                _logger.LogInformation("ffprobe installed to {Path}", ffprobePath);
-                return ffprobePath;
+                _logger.LogInformation("ffprobe installed to {Path}", _ffprobePath);
+                return _ffprobePath;
             }
             catch (TaskCanceledException ex)
             {
@@ -652,6 +649,234 @@ namespace Listenarr.Api.Services
             }
 
             return null;
+        }
+
+        public async Task<AudioMetadata> RunFfprobeAsync(string filePath)
+        {
+            var sanitizedFilePath = LogRedaction.SanitizeFilePath(filePath);
+            JsonElement ffprobeData;
+            try
+            {
+                _logger.LogInformation("Running bundled ffprobe at {Path} against file {File}", _ffprobePath, filePath);
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _ffprobePath,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                startInfo.ArgumentList.Add("-v");
+                startInfo.ArgumentList.Add("quiet");
+                startInfo.ArgumentList.Add("-print_format");
+                startInfo.ArgumentList.Add("json");
+                startInfo.ArgumentList.Add("-show_format");
+                startInfo.ArgumentList.Add("-show_streams");
+                startInfo.ArgumentList.Add(filePath);
+
+                if (_processRunner == null)
+                {
+                    throw new FfmpegException($"IProcessRunner is not available; cannot run ffprobe for {sanitizedFilePath}");
+                }
+
+                var pr = await _processRunner.RunAsync(startInfo, 10000);
+                _logger.LogInformation("ffprobe exit code {Code} for file {File}; stderr length={Len}", pr.ExitCode, sanitizedFilePath, pr.Stderr?.Length ?? 0);
+
+                if (string.IsNullOrEmpty(pr.Stdout))
+                {
+                    throw new FfmpegException($"Failed to parse ffprobe JSON output for {sanitizedFilePath}: Cannot retrieve output or retrieved empty output");
+                }
+
+                try 
+                {
+                    ffprobeData = JsonSerializer.Deserialize<JsonElement>(pr.Stdout);
+                }
+                catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or StackOverflowException)) 
+                {
+                    throw new FfmpegException($"Failed to parse ffprobe JSON output for {sanitizedFilePath}", ex);
+                }
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                throw new FfmpegException($"ffprobe execution failed for {sanitizedFilePath}", ex);
+            }
+            catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException or StackOverflowException)) {
+                throw new FfmpegException($"Error running ffprobe for {sanitizedFilePath}", ex);
+            }
+
+            var metadata = new AudioMetadata();
+
+            // Try to get format info
+            if (ffprobeData.TryGetProperty("format", out var fmt))
+            {
+                if (fmt.TryGetProperty("duration", out var durEl)
+                    && durEl.ValueKind == JsonValueKind.String
+                    && double.TryParse(durEl.GetString(), out var dur))
+                {
+                    metadata.Duration = TimeSpan.FromSeconds(dur);
+                }
+                if (fmt.TryGetProperty("format_name", out var fmtName) && fmtName.ValueKind == JsonValueKind.String)
+                {
+                    var rawFmt = fmtName.GetString() ?? string.Empty;
+                    var primary = rawFmt.Split(',')[0];
+
+                    var ext = Path.GetExtension(filePath)?.TrimStart('.')?.ToLowerInvariant();
+                    if (!string.IsNullOrEmpty(ext))
+                    {
+                        if (ext == "m4b")
+                        {
+                            metadata.Format = ext.ToUpperInvariant();
+                            metadata.Container = ext.ToUpperInvariant();
+                        }
+                        else
+                        {
+                            metadata.Format = primary.ToUpperInvariant();
+                            metadata.Container = primary.ToUpperInvariant();
+                        }
+                    }
+                    else
+                    {
+                        metadata.Format = primary.ToUpperInvariant();
+                        metadata.Container = primary.ToUpperInvariant();
+                    }
+                }
+                if (fmt.TryGetProperty("bit_rate", out var br) && br.ValueKind == JsonValueKind.String && int.TryParse(br.GetString(), out var bitRate))
+                {
+                    metadata.Bitrate = bitRate;
+                }
+                if (fmt.TryGetProperty("tags", out var formatTags) && formatTags.ValueKind == JsonValueKind.Object)
+                {
+                    ApplyTagMetadata(metadata, formatTags);
+                }
+            }
+
+            // Streams: look for audio stream for sample rate, channels
+            if (ffprobeData.TryGetProperty("streams", out var streams) && streams.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var s in streams
+                    .EnumerateArray()
+                    .Where(s => s.TryGetProperty("codec_type", out var codecType) && codecType.GetString() == "audio"))
+                {
+                    if (s.TryGetProperty("sample_rate", out var sr) && sr.ValueKind == JsonValueKind.String && int.TryParse(sr.GetString(), out var sampleRate))
+                    {
+                        metadata.SampleRate = sampleRate;
+                    }
+                    if (s.TryGetProperty("channels", out var ch) && ch.ValueKind == JsonValueKind.Number)
+                    {
+                        metadata.Channels = ch.GetInt32();
+                    }
+                    if (s.TryGetProperty("bit_rate", out var sbr) && sbr.ValueKind == JsonValueKind.String && int.TryParse(sbr.GetString(), out var sbit))
+                    {
+                        metadata.Bitrate = metadata.Bitrate == 0 ? sbit : metadata.Bitrate;
+                    }
+                    if (s.TryGetProperty("codec_name", out var codecName) && codecName.ValueKind == JsonValueKind.String)
+                    {
+                        metadata.Codec = codecName.GetString();
+                    }
+                    if (s.TryGetProperty("tags", out var streamTags) && streamTags.ValueKind == JsonValueKind.Object)
+                    {
+                        ApplyTagMetadata(metadata, streamTags);
+                    }
+                    break;
+                }
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(filePath);
+            if (string.IsNullOrEmpty(metadata.Title)) metadata.Title = fileName;
+            if (string.IsNullOrEmpty(metadata.Format)) metadata.Format = Path.GetExtension(filePath).TrimStart('.').ToUpper();
+            if (string.IsNullOrEmpty(metadata.Container)) metadata.Container = Path.GetExtension(filePath).TrimStart('.').ToUpper();
+
+            _logger.LogInformation("Extracted ffprobe metadata from file: {File}", LogRedaction.SanitizeText(filePath));
+            _logger.LogDebug("Parsed metadata: Duration={Duration} seconds, Format={Format}, Bitrate={Bitrate}, SampleRate={SampleRate}, Channels={Channels}", metadata.Duration.TotalSeconds, metadata.Format, metadata.Bitrate, metadata.SampleRate, metadata.Channels);
+
+            return metadata;
+        }
+
+        private static void ApplyTagMetadata(AudioMetadata metadata, JsonElement tags)
+        {
+            metadata.Title = FirstNonEmpty(metadata.Title, GetTag(tags, "title", "TITLE"));
+            metadata.Artist = FirstNonEmpty(metadata.Artist, GetTag(tags, "artist", "ARTIST"));
+            metadata.Album = FirstNonEmpty(metadata.Album, GetTag(tags, "album", "ALBUM"));
+            metadata.AlbumArtist = FirstNonEmpty(metadata.AlbumArtist, GetTag(tags, "album_artist", "ALBUM_ARTIST", "album artist"));
+
+            metadata.TrackNumber ??= ParseNumericTag(tags, "track", "TRACK", "tracknumber", "TRACKNUMBER");
+            metadata.DiscNumber ??= ParseNumericTag(tags, "disc", "DISC", "discnumber", "DISCNUMBER");
+            metadata.Year ??= ParseNumericTag(tags, "date", "DATE", "year", "YEAR");
+        }
+
+        private static string FirstNonEmpty(params string?[] candidates)
+        {
+            foreach (var candidate in candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate)))
+            {
+                return candidate!;
+            }
+
+            return string.Empty;
+        }
+
+        private static string? GetTag(JsonElement tags, params string[] names)
+        {
+            return names
+                .Select(name => TryGetTagValue(tags, name, out var value) ? value : null)
+                .FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value))
+                ?.Trim();
+        }
+
+        private static int? ParseNumericTag(JsonElement tags, params string[] names)
+        {
+            var raw = GetTag(tags, names);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return null;
+            }
+
+            var token = raw.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? raw;
+            var match = System.Text.RegularExpressions.Regex.Match(token, @"\d+");
+            return match.Success && int.TryParse(match.Value, out var parsed) ? parsed : null;
+        }
+
+        private static bool TryGetTagValue(JsonElement tags, string name, out string? value)
+        {
+            if (tags.TryGetProperty(name, out var direct) && direct.ValueKind == JsonValueKind.String)
+            {
+                value = direct.GetString();
+                return true;
+            }
+
+            foreach (var property in tags.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.String)
+                {
+                    value = property.Value.GetString();
+                    return true;
+                }
+            }
+
+            value = null;
+            return false;
+        }
+
+        public string FfprobePath {
+            get
+            {
+                return _ffprobePath;
+            }
+        }
+
+        public async Task<string> GetLicenseAsync() {
+            var licensePath = Path.Join(_baseDir, "LICENSE_NOTICE.txt");
+            if (System.IO.File.Exists(licensePath))
+            {
+                return await System.IO.File.ReadAllTextAsync(licensePath);
+            }
+
+            return string.Empty;
         }
     }
 }

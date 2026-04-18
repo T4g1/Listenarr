@@ -123,7 +123,7 @@ namespace Listenarr.Api.Tests
             {
                 var ffmpegMock = new Mock<Listenarr.Api.Services.IFfmpegService>();
                 var mockPath = Path.Join(Path.GetTempPath(), "mock-ffprobe");
-                ffmpegMock.Setup(f => f.GetFfprobePathAsync(It.IsAny<bool>()))
+                ffmpegMock.Setup(f => f.GetFfprobePathAsync())
                     .ReturnsAsync(mockPath);
                 ffmpegMock.Setup(f => f.EnsureFfprobeInstalledAsync())
                     .ReturnsAsync(mockPath);
