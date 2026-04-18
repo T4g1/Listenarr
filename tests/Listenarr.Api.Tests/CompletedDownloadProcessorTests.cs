@@ -16,7 +16,8 @@ using Listenarr.Application.Services;
 namespace Listenarr.Api.Tests
 {
     [Trait("Area", "CompletedDownloadProcessing")]
-    public class CompletedDownloadProcessorTests
+    [Trait("Category", "CompletedDownloadProcessor")]
+    public class CompletedDownloadProcessorTests : BaseTests
     {
         [Fact]
         [Trait("Scenario", "TransientFailureStaysImportPending")]
@@ -640,7 +641,9 @@ namespace Listenarr.Api.Tests
             System.IO.File.WriteAllText(foreignAudioPath, "foreign");
             System.IO.File.WriteAllText(coverPath, "cover");
 
-            var repo = new TestDownloadRepository();
+            var db = CreateDB();
+            var context = db.CreateDbContext();
+            var repo = new TestDownloadRepository(context);
             await repo.AddAsync(new Download
             {
                 Id = downloadId,
@@ -667,13 +670,13 @@ namespace Listenarr.Api.Tests
                 ExtractArchives = false,
                 ImportBlacklistExtensions = new List<string>()
             });
+            
+            var importResolverMock = new Mock<IImportItemResolutionService>();
+            var provider = MockUtils.CreateServiceProvider(importResolverMock.Object, context, "");
 
             var scopeFactoryMock = new Mock<IServiceScopeFactory>();
             var scopeMock = new Mock<IServiceScope>();
-            var spMock = new Mock<IServiceProvider>();
-            spMock.Setup(sp => sp.GetService(typeof(ListenArrDbContext))).Returns(null);
-            spMock.Setup(sp => sp.GetService(typeof(IMetadataService))).Returns(null);
-            scopeMock.Setup(s => s.ServiceProvider).Returns(spMock.Object);
+            scopeMock.Setup(s => s.ServiceProvider).Returns(provider);
             scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
             var importMock = new Mock<IImportService>();
@@ -723,7 +726,9 @@ namespace Listenarr.Api.Tests
             System.IO.File.WriteAllText(txtPath, "txt");
             System.IO.File.WriteAllText(unrelatedPath, "ignore");
 
-            var repo = new TestDownloadRepository();
+            var db = CreateDB();
+            var context = db.CreateDbContext();
+            var repo = new TestDownloadRepository(context);
             await repo.AddAsync(new Download
             {
                 Id = downloadId,
@@ -778,13 +783,12 @@ namespace Listenarr.Api.Tests
             hubClientsMock.Setup(c => c.All).Returns(clientProxyMock.Object);
             var hubContextMock = new Mock<IHubContext<Listenarr.Api.Hubs.DownloadHub>>();
             hubContextMock.Setup(h => h.Clients).Returns(hubClientsMock.Object);
+            
+            var provider = MockUtils.CreateServiceProvider(importResolverMock.Object, context, "");
 
             var scopeFactoryMock = new Mock<IServiceScopeFactory>();
             var scopeMock = new Mock<IServiceScope>();
-            var spMock = new Mock<IServiceProvider>();
-            spMock.Setup(sp => sp.GetService(typeof(ListenArrDbContext))).Returns(null);
-            spMock.Setup(sp => sp.GetService(typeof(IImportItemResolutionService))).Returns(importResolverMock.Object);
-            scopeMock.Setup(s => s.ServiceProvider).Returns(spMock.Object);
+            scopeMock.Setup(s => s.ServiceProvider).Returns(provider);
             scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
 
             var importMock = new Mock<IImportService>();

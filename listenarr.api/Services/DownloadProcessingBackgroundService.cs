@@ -410,12 +410,29 @@ namespace Listenarr.Api.Services
             if (Directory.Exists(job.SourcePath) && !File.Exists(job.SourcePath))
             {
                 job.AddLogEntry($"Source is a directory, scanning for importable files: {job.SourcePath}");
-                var importableFiles = Directory.EnumerateFiles(job.SourcePath, "*.*", SearchOption.AllDirectories)
-                    .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
-                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                var importableFiles = new List<string>();
+                
+                var dbContext = scope.ServiceProvider.GetService<ListenArrDbContext>();
+                if (dbContext != null)
+                {
+                    var download = await dbContext.Downloads.FindAsync([job.DownloadId], cancellationToken);
+                    if (download != null)
+                    {
+                        try
+                        {
+                            importableFiles = await MatchLocalAndDownloadedFilesAsync(scope, download, job.SourcePath, settings.ImportBlacklistExtensions, _logger, cancellationToken);
+                        }
+                        catch(DownloadProcessingException exception)
+                        {
+                            // FIXME: Should we really still process unfiltered files in that case ?
+                            _logger.LogWarning(exception, exception.Message);
 
-                importableFiles = await FilterToClientReportedFilesAsync(job, scope, importableFiles, cancellationToken);
+                            importableFiles = [.. Directory.EnumerateFiles(job.SourcePath, "*.*", SearchOption.AllDirectories)
+                                    .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
+                                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)];
+                        }
+                    }
+                }
 
                 if (importableFiles.Count == 0)
                 {
@@ -1022,34 +1039,36 @@ namespace Listenarr.Api.Services
         }
 
         /// <summary>
-        /// 
+        /// List files in the given folder and check which ones belongs to the given download
         /// </summary>
-        /// <param name="job"></param>
-        /// <param name="scope"></param>
-        /// <param name="importableFiles">Files found by Linstenarr</param>
+        /// <param name="scope">Scope provider to query required services</param>
+        /// <param name="download">Download to which we want to match files</param>
+        /// <param name="localPath">Local Listenarr path where files are located</param>
+        /// <param name="blacklistedExtensions">List of file extension that can never be matched</param>
         /// <param name="cancellationToken"></param>
-        /// <returns></returns>
-        private async Task<List<string>> FilterToClientReportedFilesAsync(
-            DownloadProcessingJob job,
+        /// <param name="logger"></param>
+        /// <returns>List of files that are in the given local directory and also part of the given download</returns>
+        /// <exception cref="DownloadProcessingException">Thrown when we are technicaly unable to perform the filtering based on download client retrieved informations</exception>
+        public static async Task<List<string>> MatchLocalAndDownloadedFilesAsync(
             IServiceScope scope,
-            List<string> importableFiles,
-            CancellationToken cancellationToken)
+            Download download,
+            string localPath,
+            List<string> blacklistedExtensions,
+            ILogger logger,
+            CancellationToken cancellationToken = default)
         {
+            var importableFiles = Directory.EnumerateFiles(localPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => !FileUtils.IsBlacklistedFile(f, blacklistedExtensions))
+                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                .ToList();
             try
             {
-                var dbContext = scope.ServiceProvider.GetService<ListenArrDbContext>();
                 var importResolver = scope.ServiceProvider.GetService<IImportItemResolutionService>();
                 var remotePathMappingService = scope.ServiceProvider.GetService<IRemotePathMappingService>();
 
-                if (dbContext == null || importResolver == null || remotePathMappingService == null)
+                if (importResolver == null || remotePathMappingService == null)
                 {
-                    return importableFiles;
-                }
-
-                var download = await dbContext.Downloads.FindAsync(new object[] { job.DownloadId }, cancellationToken);
-                if (download == null)
-                {
-                    return importableFiles;
+                    throw new DownloadProcessingException("Service required are not available");
                 }
 
                 var clientContentPath = download.Metadata?.TryGetValue("ClientContentPath", out var ccp) is true
@@ -1070,9 +1089,9 @@ namespace Listenarr.Api.Services
                     previousAttempt: null,
                     cancellationToken);
 
-                if (downloadClientItem.SourceFiles == null || downloadClientItem.SourceFiles.Count == 0)
+                if (downloadClientItem == null || downloadClientItem.SourceFiles == null || downloadClientItem.SourceFiles.Count == 0)
                 {
-                    return importableFiles;
+                    throw new DownloadProcessingException($"Unable to get the client item matching download or no files reported by the download client for download {download.Id}");
                 }
 
                 var allowedFiles = new HashSet<string>(
@@ -1090,28 +1109,28 @@ namespace Listenarr.Api.Services
                 var filteredFiles = importableFiles
                     .Where(tranlatedAllowedFiles.Contains)
                     .ToList();
-
-                if (filteredFiles.Count == 0)
+                
+                if (filteredFiles.Count() == 0)
                 {
-                    _logger.LogWarning(
+                    logger.LogWarning(
                         "Download client reported {ClientFileCount} related file(s) for download {DownloadId}, but none matched the local import candidates under {SourcePath}",
                         allowedFiles.Count,
-                        job.DownloadId,
-                        job.SourcePath);
+                        download.Id,
+                        localPath);
                 }
-
-                _logger.LogInformation(
-                    "Scoped directory import for download {DownloadId} from {OriginalCount} to {FilteredCount} file(s) using the download client's reported file list",
-                    job.DownloadId,
-                    importableFiles.Count,
-                    filteredFiles.Count);
-
+                else
+                {
+                    logger.LogInformation(
+                        "Scoped directory import for download {DownloadId} from {OriginalCount} to {FilteredCount} file(s) using the download client's reported file list",
+                        download.Id,
+                        importableFiles.Count,
+                        filteredFiles.Count);
+                }
                 return filteredFiles;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+            catch (Exception ex) when (ex is not (DownloadProcessingException or OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
-                _logger.LogDebug(ex, "Failed to scope directory import to download-client reported files for download {DownloadId}", job.DownloadId);
-                return importableFiles;
+                throw new DownloadProcessingException($"Unknown error while matching download client files to local files for import for download {download.Id}", ex);
             }
         }
 

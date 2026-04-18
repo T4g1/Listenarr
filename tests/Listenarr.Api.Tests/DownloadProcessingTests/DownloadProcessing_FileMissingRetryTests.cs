@@ -156,6 +156,9 @@ namespace Listenarr.Api.Tests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton(db);
+            services.AddSingleton(new Mock<IImportItemResolutionService>().Object);
+            services.AddMemoryCache(); 
+            services.AddScoped<IRemotePathMappingService, RemotePathMappingService>();
 
             var configMock = new Mock<IConfigurationService>();
             configMock.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(new ApplicationSettings
