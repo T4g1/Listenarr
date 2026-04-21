@@ -29,6 +29,7 @@ using System.Text.Encodings.Web;
 using Microsoft.Extensions.Caching.Memory;
 using Listenarr.Application.Services;
 using Listenarr.Api.Services.Adapters;
+using Listenarr.Domain.Utils;
 
 namespace Listenarr.Api.Services
 {
@@ -163,77 +164,6 @@ namespace Listenarr.Api.Services
             {
                 throw new InvalidOperationException("No ListenArrDbContext or IDbContextFactory<ListenArrDbContext> is registered in the current service scope.");
             }
-        }
-
-        /// <summary>
-        /// Normalizes a title for better matching by removing format indicators and extra spaces
-        /// </summary>
-        private static string NormalizeTitle(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-                return string.Empty;
-
-            // Remove ALL bracketed content [anything] - more robust than specific patterns
-            var result = System.Text.RegularExpressions.Regex.Replace(title, @"\[.*?\]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            // Remove ALL parentheses content (anything) - handles unknown quality/group indicators
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\(.*?\)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            // Remove curly braces content {anything}
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\{.*?\}", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            // Remove common separators and replace with spaces
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"[\-_\.]+", " ", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            // Remove common quality/format indicators that might not be in brackets
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\b(mp3|m4a|m4b|flac|aac|ogg|opus|320|256|128|v0|v2|audiobook|unabridged|abridged)\b", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            // Normalize multiple spaces to single spaces
-            result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ");
-
-            // Remove trailing/leading spaces, dashes, etc.
-            result = result.Trim(' ', '-', '.', ',');
-
-            return result;
-        }
-
-        /// <summary>
-        /// Checks if two titles are similar enough to be considered a match
-        /// </summary>
-        private static bool AreTitlesSimilar(string title1, string title2)
-        {
-            var norm1 = NormalizeTitle(title1);
-            var norm2 = NormalizeTitle(title2);
-
-            // Exact match after normalization
-            if (string.Equals(norm1, norm2, StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            // Bidirectional contains â€“ require the contained string to be
-            // "substantial" (at least 15 chars after normalization) to prevent
-            // short common words from producing false positives.
-            if (norm1.Length >= 15 && norm2.Contains(norm1, StringComparison.OrdinalIgnoreCase))
-                return true;
-            if (norm2.Length >= 15 && norm1.Contains(norm2, StringComparison.OrdinalIgnoreCase))
-                return true;
-
-            return false;
-        }
-
-        /// <summary>
-        /// Create a filesystem-safe name from arbitrary text by removing invalid path characters
-        /// and normalizing whitespace. Keeps it conservative to avoid unexpected folder creation.
-        /// </summary>
-        private static string SafeFileName(string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return "unknown";
-            // Remove invalid path chars
-            var invalid = Path.GetInvalidFileNameChars();
-            var cleaned = new string(name.Where(c => !invalid.Contains(c)).ToArray());
-            // Replace sequences of non-alphanumeric characters with single space
-            var normalized = System.Text.RegularExpressions.Regex.Replace(cleaned, "[^A-Za-z0-9]+", " ");
-            normalized = normalized.Trim();
-            return normalized.Length == 0 ? "unknown" : normalized;
         }
 
         // Cache entry for qbittorrent per-torrent properties (used sparingly, only when needed)
@@ -1019,9 +949,9 @@ namespace Listenarr.Api.Services
                                 // 2. Exact normalized title match (strip brackets/quality tags only)
                                 if (string.IsNullOrEmpty(matched.Hash))
                                 {
-                                    var dlNorm = NormalizeTitle(dl.Title);
+                                    var dlNorm = TitleUtils.NormalizeTitle(dl.Title);
                                     matched = torrentLookup.FirstOrDefault(t =>
-                                        string.Equals(NormalizeTitle(t.Name), dlNorm, StringComparison.OrdinalIgnoreCase));
+                                        string.Equals(TitleUtils.NormalizeTitle(t.Name), dlNorm, StringComparison.OrdinalIgnoreCase));
 
                                     if (!string.IsNullOrEmpty(matched.Hash))
                                     {
@@ -1437,7 +1367,7 @@ namespace Listenarr.Api.Services
                                     if (string.Equals(name, dl.Title, StringComparison.OrdinalIgnoreCase))
                                         return true;
                                     if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(dl.Title) &&
-                                        string.Equals(NormalizeTitle(name), NormalizeTitle(dl.Title), StringComparison.OrdinalIgnoreCase))
+                                        string.Equals(TitleUtils.NormalizeTitle(name), TitleUtils.NormalizeTitle(dl.Title), StringComparison.OrdinalIgnoreCase))
                                         return true;
                                     return false;
                                 });
@@ -2123,7 +2053,7 @@ namespace Listenarr.Api.Services
 
                                     if (matchingDownload == null && !string.IsNullOrEmpty(filename))
                                     {
-                                        matchingDownload = downloads.FirstOrDefault(dl => AreTitlesSimilar(dl.Title, filename));
+                                        matchingDownload = downloads.FirstOrDefault(dl => TitleUtils.AreTitlesSimilar(dl.Title, filename));
                                     }
 
                                     if (matchingDownload != null)
@@ -2459,7 +2389,7 @@ namespace Listenarr.Api.Services
 
                                             if (matchingDownload == null && !string.IsNullOrEmpty(nzbName))
                                             {
-                                                matchingDownload = downloads.FirstOrDefault(dl => AreTitlesSimilar(dl.Title, nzbName));
+                                                matchingDownload = downloads.FirstOrDefault(dl => TitleUtils.AreTitlesSimilar(dl.Title, nzbName));
                                             }
 
                                             if (matchingDownload != null &&

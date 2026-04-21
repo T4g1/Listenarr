@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Listenarr.Api.Repositories;
 using Listenarr.Domain.Models;
+using Listenarr.Domain.Utils;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
@@ -77,8 +78,8 @@ namespace Listenarr.Api.Services
 
             var enabledClients = downloadClients.Where(c => c.IsEnabled).ToList();
 
-            List<QueueTrackedDownload> listenarrDownloads;
-            List<QueueTrackedDownload> allDownloadsForMatching;
+            List<Download> listenarrDownloads;
+            List<Download> allDownloadsForMatching;
             var allKnownClientItemIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             {
@@ -93,7 +94,7 @@ namespace Listenarr.Api.Services
                     knownClientItemIds.Count);
 
                 var ddlDownloads = queueDisplayCandidates.Where(d => d.DownloadClientId == "DDL").ToList();
-                var ddlToShow = new List<QueueTrackedDownload>();
+                var ddlToShow = new List<Download>();
 
                 if (ddlDownloads.Any())
                 {
@@ -739,7 +740,7 @@ namespace Listenarr.Api.Services
         }
 
         private async Task PersistDiscoveredClientIdentifiersAsync(
-            QueueTrackedDownload matchedDownload,
+            Download matchedDownload,
             DownloadClientConfiguration client,
             string? originalClientId,
             HashSet<string> allKnownClientItemIds)
@@ -774,10 +775,10 @@ namespace Listenarr.Api.Services
             }
         }
 
-        private QueueTrackedDownload? FindBestMatchingDownload(
+        private Download? FindBestMatchingDownload(
             QueueItem queueItem,
             DownloadClientConfiguration client,
-            IEnumerable<QueueTrackedDownload> candidateDownloads)
+            IEnumerable<Download> candidateDownloads)
         {
             if (queueItem == null || client == null || candidateDownloads == null)
             {
@@ -789,7 +790,7 @@ namespace Listenarr.Api.Services
                 .Select(download => new
                 {
                     Download = download,
-                    Score = GetQueueMatchScore(download, queueItem)
+                    Score = queueItem.GetMatchScore(download)
                 })
                 .Where(x => x.Score > 0)
                 .OrderByDescending(x => x.Score)
@@ -813,204 +814,6 @@ namespace Listenarr.Api.Services
             }
 
             return bestMatch.Download;
-        }
-
-        private int GetQueueMatchScore(QueueTrackedDownload download, QueueItem queueItem)
-        {
-            if (download == null || queueItem == null)
-            {
-                return 0;
-            }
-
-            if (!string.IsNullOrWhiteSpace(download.Id) &&
-                !string.IsNullOrWhiteSpace(queueItem.Id) &&
-                string.Equals(download.Id, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 4;
-            }
-
-            var clientDownloadId = GetMetadataString(download.Metadata, "ClientDownloadId");
-            if (!string.IsNullOrWhiteSpace(clientDownloadId) &&
-                string.Equals(clientDownloadId, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 3;
-            }
-
-            var torrentHash = GetMetadataString(download.Metadata, "TorrentHash");
-            if (!string.IsNullOrWhiteSpace(torrentHash) &&
-                string.Equals(torrentHash, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 3;
-            }
-
-            if (TitlesExactlyMatch(download.Title, queueItem.Title))
-            {
-                return 2;
-            }
-
-            if (IsMatchingTitle(download.Title, queueItem.Title))
-            {
-                if (QueueTitleContainsArtist(download, queueItem))
-                {
-                    return 2;
-                }
-
-                if (IsStrongStandaloneTitleMatch(download.Title, queueItem.Title))
-                {
-                    return 1;
-                }
-            }
-
-            return 0;
-        }
-
-        private bool TitlesExactlyMatch(string titleA, string titleB)
-        {
-            var normalizedA = NormalizeTitle(titleA);
-            var normalizedB = NormalizeTitle(titleB);
-
-            return !string.IsNullOrWhiteSpace(normalizedA) &&
-                   string.Equals(normalizedA, normalizedB, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool QueueTitleContainsArtist(QueueTrackedDownload download, QueueItem queueItem)
-        {
-            var normalizedArtist = NormalizeTitle(download?.Artist ?? string.Empty);
-            if (string.IsNullOrWhiteSpace(normalizedArtist) || normalizedArtist.Length < 4)
-            {
-                return false;
-            }
-
-            var normalizedQueueTitle = NormalizeTitle(queueItem?.Title ?? string.Empty);
-            return normalizedQueueTitle.Contains(normalizedArtist, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool IsStrongStandaloneTitleMatch(string titleA, string titleB)
-        {
-            var normalizedA = NormalizeTitle(titleA);
-            var normalizedB = NormalizeTitle(titleB);
-            if (string.IsNullOrWhiteSpace(normalizedA) || string.IsNullOrWhiteSpace(normalizedB))
-            {
-                return false;
-            }
-
-            var shorter = normalizedA.Length <= normalizedB.Length ? normalizedA : normalizedB;
-            var longer = normalizedA.Length <= normalizedB.Length ? normalizedB : normalizedA;
-            var shorterTokenCount = shorter.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-
-            if (shorter.Length >= 15 || shorterTokenCount >= 3)
-            {
-                return true;
-            }
-
-            if (shorter.Length >= 10 &&
-                (longer.StartsWith(shorter + " ", StringComparison.OrdinalIgnoreCase) ||
-                 longer.EndsWith(" " + shorter, StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private bool IsMatchingTitle(string titleA, string titleB)
-        {
-            try
-            {
-                return AreTitlesSimilar(titleA ?? string.Empty, titleB ?? string.Empty);
-            }
-            catch (Exception caughtEx) when (caughtEx is not OperationCanceledException && caughtEx is not OutOfMemoryException && caughtEx is not StackOverflowException)
-            {
-                return false;
-            }
-        }
-
-        private bool AreTitlesSimilar(string titleA, string titleB)
-        {
-            var normalizedA = NormalizeTitle(titleA);
-            var normalizedB = NormalizeTitle(titleB);
-
-            if (string.IsNullOrWhiteSpace(normalizedA) || string.IsNullOrWhiteSpace(normalizedB))
-            {
-                return false;
-            }
-
-            if (string.Equals(normalizedA, normalizedB, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            var shorter = normalizedA.Length <= normalizedB.Length ? normalizedA : normalizedB;
-            var longer = normalizedA.Length <= normalizedB.Length ? normalizedB : normalizedA;
-            var shorterTokens = shorter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var longerTokens = longer.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-            if (shorterTokens.Length == 0 || longerTokens.Length == 0)
-            {
-                return false;
-            }
-
-            if (shorterTokens.Length == 1)
-            {
-                var token = shorterTokens[0];
-                return token.Length >= 6 &&
-                       longerTokens.Contains(token, StringComparer.OrdinalIgnoreCase);
-            }
-
-            if (longer.Contains(shorter, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return TokensAppearInOrder(shorterTokens, longerTokens);
-        }
-
-        private string NormalizeTitle(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return string.Empty;
-            }
-
-            var lower = title.ToLowerInvariant();
-            lower = Regex.Replace(lower, @"[\[\]\(\)\{\}_\.-]+", " ");
-            lower = Regex.Replace(lower, @"\b\d{2,4}\s*kbps\b", " ");
-            lower = Regex.Replace(lower, @"\b(mp3|m4a|m4b|flac|aac|ogg|opus|audiobook|unabridged|abridged)\b", " ");
-            lower = Regex.Replace(lower, @"\b(19|20)\d{2}\b", " ");
-            var cleaned = new string(lower.Where(ch => char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch)).ToArray());
-            return string.Join(' ', cleaned.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
-        }
-
-        private static bool TokensAppearInOrder(string[] shorterTokens, string[] longerTokens)
-        {
-            if (shorterTokens == null || longerTokens == null || shorterTokens.Length == 0 || longerTokens.Length == 0)
-            {
-                return false;
-            }
-
-            var longerIndex = 0;
-            foreach (var token in shorterTokens)
-            {
-                var found = false;
-                while (longerIndex < longerTokens.Length)
-                {
-                    if (string.Equals(token, longerTokens[longerIndex], StringComparison.OrdinalIgnoreCase))
-                    {
-                        found = true;
-                        longerIndex++;
-                        break;
-                    }
-
-                    longerIndex++;
-                }
-
-                if (!found)
-                {
-                    return false;
-                }
-            }
-
-            return true;
         }
 
         private static IEnumerable<string> GetKnownClientItemIds(Dictionary<string, object>? metadata)

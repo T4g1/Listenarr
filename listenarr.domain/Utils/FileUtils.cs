@@ -75,20 +75,19 @@ namespace Listenarr.Domain.Utils
                 return string.Empty;
             }
 
-            var trimmedPath = path.Trim();
             string normalizedPath;
             try
             {
-                normalizedPath = Path.GetFullPath(trimmedPath);
+                normalizedPath = Path.GetFullPath(path);
             }
             catch (Exception caughtEx_0) when (caughtEx_0 is not OperationCanceledException && caughtEx_0 is not OutOfMemoryException && caughtEx_0 is not StackOverflowException)
             {
-                normalizedPath = trimmedPath;
+                normalizedPath = path;
             }
 
             if (string.IsNullOrWhiteSpace(normalizedPath))
             {
-                return trimmedPath;
+                return path;
             }
 
             var resolver = longPathResolver;
@@ -638,6 +637,22 @@ namespace Listenarr.Domain.Utils
         {
             string root = Path.GetPathRoot(Directory.GetCurrentDirectory()) ?? "/";
             return Path.Combine(root, Path.Combine(segments));
+        }
+
+        /// <summary>
+        /// Create a filesystem-safe name from arbitrary text by removing invalid path characters
+        /// and normalizing whitespace. Keeps it conservative to avoid unexpected folder creation.
+        /// </summary>
+        public static string SafeFileName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return "unknown";
+            // Remove invalid path chars
+            var invalid = Path.GetInvalidFileNameChars();
+            var cleaned = new string(name.Where(c => !invalid.Contains(c)).ToArray());
+            // Replace sequences of non-alphanumeric characters with single space
+            var normalized = System.Text.RegularExpressions.Regex.Replace(cleaned, "[^A-Za-z0-9]+", " ");
+            normalized = normalized.Trim();
+            return normalized.Length == 0 ? "unknown" : normalized;
         }
     }
 }

@@ -104,20 +104,18 @@ namespace Listenarr.Api.Tests
             return Task.FromResult(_mem.Values.ToList());
         }
 
-        public Task<List<QueueTrackedDownload>> GetQueueDisplayCandidatesAsync()
+        public Task<List<Download>> GetQueueDisplayCandidatesAsync()
         {
             if (_db != null)
             {
                 var projected = _db.Downloads
                     .Where(IsQueueDisplayCandidate)
-                    .Select(ToQueueTrackedDownloadProjection)
                     .ToList();
                 return Task.FromResult(projected);
             }
 
             var list = _mem.Values
                 .Where(IsQueueDisplayCandidate)
-                .Select(ToQueueTrackedDownloadProjection)
                 .ToList();
             return Task.FromResult(list);
         }
@@ -131,20 +129,18 @@ namespace Listenarr.Api.Tests
             return (isDdl && notMoved) || (!isDdl && notMoved && notFailed && notCompletedWithPath);
         }
 
-        public Task<List<QueueTrackedDownload>> GetQueueMatchingCandidatesAsync()
+        public Task<List<Download>> GetQueueMatchingCandidatesAsync()
         {
             if (_db != null)
             {
                 var projected = _db.Downloads
                     .Where(d => d.DownloadClientId != "DDL" && d.Status != DownloadStatus.Failed)
-                    .Select(ToQueueTrackedDownloadProjection)
                     .ToList();
                 return Task.FromResult(projected);
             }
 
             var list = _mem.Values
                 .Where(d => d.DownloadClientId != "DDL" && d.Status != DownloadStatus.Failed)
-                .Select(ToQueueTrackedDownloadProjection)
                 .ToList();
             return Task.FromResult(list);
         }
@@ -197,24 +193,6 @@ namespace Listenarr.Api.Tests
 
             var list = _mem.Values.Where(d => idSet.Contains(d.Id)).ToList();
             return Task.FromResult(list);
-        }
-
-        private static QueueTrackedDownload ToQueueTrackedDownloadProjection(Download download)
-        {
-            return new QueueTrackedDownload
-            {
-                Id = download.Id,
-                DownloadClientId = download.DownloadClientId,
-                Title = download.Title,
-                Artist = download.Artist,
-                Status = download.Status,
-                StartedAt = download.StartedAt,
-                TotalSize = download.TotalSize,
-                DownloadedSize = download.DownloadedSize,
-                DownloadPath = download.DownloadPath,
-                FinalPath = download.FinalPath,
-                Metadata = download.Metadata
-            };
         }
     }
 }

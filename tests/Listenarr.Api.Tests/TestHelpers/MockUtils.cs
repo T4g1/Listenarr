@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestPlatform.Utilities;
 using Moq;
+using SixLabors.ImageSharp;
 
 namespace Listenarr.Api.Tests
 {
@@ -51,7 +52,7 @@ namespace Listenarr.Api.Tests
             return CreateServiceProvider(new Mock<IImportItemResolutionService>().Object, db, outputPath);
         }
 
-        public static ServiceProvider CreateServiceProvider(IImportItemResolutionService importItemResolutionService, ListenArrDbContext db, string outputPath = "")
+        public static ServiceProvider CreateServiceProvider(IImportItemResolutionService importItemResolutionService, ListenArrDbContext db, string outputPath = "", DownloadClientConfiguration downloadClientConfiguration = null)
         {
             var metricsMock = new Mock<IAppMetricsService>();
 
@@ -61,8 +62,15 @@ namespace Listenarr.Api.Tests
                 OutputPath = outputPath,
                 CompletedFileAction = "Copy",
                 EnableMetadataProcessing = false,
-                MultiFileNamingPattern = "{Title}-{DiskNumber:00}-{ChapterNumber:00}"
+                MultiFileNamingPattern = "{Title}-{DiskNumber:00}-{ChapterNumber:00}",
             });
+            if (downloadClientConfiguration != null)
+            {
+                configMock.Setup(c => c.GetDownloadClientConfigurationsAsync()).ReturnsAsync([
+                    downloadClientConfiguration
+                ]);
+                configMock.Setup(c => c.GetDownloadClientConfigurationAsync(It.IsAny<string>())).ReturnsAsync(downloadClientConfiguration);
+            }
 
             var startupConfigServiceMock = new Mock<IStartupConfigService>();
             startupConfigServiceMock.Setup(s => s.GetConfig()).Returns(new StartupConfig { AuthenticationRequired = "false" });

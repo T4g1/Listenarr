@@ -8,6 +8,7 @@ using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
 using Listenarr.Api.Repositories;
 using Microsoft.Extensions.Logging;
+using Listenarr.Domain.Utils;
 
 namespace Listenarr.Api.Tests
 {
@@ -83,7 +84,7 @@ namespace Listenarr.Api.Tests
                                                         .Select(slot => slot.TryGetProperty("name", out var nm) ? nm.GetString() ?? string.Empty : string.Empty)
                                                         .Where(name => !string.IsNullOrEmpty(name)));
 
-                                                    var matchCount = orphaned.Count(d => !string.IsNullOrEmpty(d.Title) && names.Any(n => NormalizeTitle(n).Contains(NormalizeTitle(d.Title!))));
+                                                    var matchCount = orphaned.Count(d => !string.IsNullOrEmpty(d.Title) && names.Any(n => TitleUtils.NormalizeTitle(n).Contains(TitleUtils.NormalizeTitle(d.Title!))));
                                                     for (var i = 0; i < matchCount; i++)
                                                         _metrics.Increment("download.purge.skipped.history.title_match");
                                                 }
@@ -124,14 +125,6 @@ namespace Listenarr.Api.Tests
                 Items = items,
                 GeneratedAt = DateTime.UtcNow
             };
-        }
-
-        private string NormalizeTitle(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-            var lower = s.ToLowerInvariant();
-            var cleaned = new string(lower.Where(ch => char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch)).ToArray());
-            return string.Join(' ', cleaned.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
         }
     }
 }

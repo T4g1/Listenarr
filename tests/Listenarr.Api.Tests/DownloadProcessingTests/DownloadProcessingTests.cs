@@ -688,7 +688,7 @@ namespace Listenarr.Api.Tests
                 });
 
             var provider = MockUtils.CreateServiceProvider(importItemResolutionServiceMock.Object, context, localDestination);
-            var dpbs = new DownloadProcessingBackgroundService(
+            var downloadProcessingBackgroundService = new DownloadProcessingBackgroundService(
                 provider.GetRequiredService<IServiceScopeFactory>(), 
                 new Mock<ILogger<DownloadProcessingBackgroundService>>().Object, 
                 provider.GetRequiredService<IAppMetricsService>());
@@ -700,7 +700,7 @@ namespace Listenarr.Api.Tests
             var method = typeof(DownloadProcessingBackgroundService).GetMethod("ProcessMoveOrCopyJobAsync", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.NotNull(method);
 
-            var task = (Task)method!.Invoke(dpbs, [job, scope, CancellationToken.None])!;
+            var task = (Task)method!.Invoke(downloadProcessingBackgroundService, [job, scope, CancellationToken.None])!;
             await task;
 
             Assert.NotNull(method);

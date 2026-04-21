@@ -288,7 +288,7 @@ namespace Listenarr.Api.Services
                             : null;
                         var preliminaryItem = new QueueItem
                         {
-                            Id = GetClientDownloadItemId(dl) ?? dl.Id,
+                            Id = dl.GetClientDownloadItemId() ?? dl.Id,
                             Title = dl.Title ?? "Unknown",
                             Status = "completed",
                             ContentPath = dl.FinalPath is not null ? dl.FinalPath : clientContentPath ?? dl.DownloadPath,
@@ -1023,7 +1023,7 @@ namespace Listenarr.Api.Services
                     : null;
                 var preliminaryItem = new QueueItem
                 {
-                    Id = GetClientDownloadItemId(download) ?? download.Id,
+                    Id = download.GetClientDownloadItemId() ?? download.Id,
                     Title = download.Title ?? "Unknown",
                     Status = "completed",
                     ContentPath = clientContentPath ?? (download.FinalPath is not null ? download.FinalPath : download.DownloadPath),
@@ -1079,34 +1079,6 @@ namespace Listenarr.Api.Services
             {
                 throw new DownloadProcessingException($"Unknown error while matching download client files to local files for import for download {download.Id}", ex);
             }
-        }
-
-        private static string? GetClientDownloadItemId(Download download)
-        {
-            if (download.Metadata == null)
-            {
-                return null;
-            }
-
-            if (download.Metadata.TryGetValue("ClientDownloadId", out var clientIdObj))
-            {
-                var clientId = clientIdObj?.ToString();
-                if (!string.IsNullOrWhiteSpace(clientId))
-                {
-                    return clientId;
-                }
-            }
-
-            if (download.Metadata.TryGetValue("TorrentHash", out var torrentHashObj))
-            {
-                var torrentHash = torrentHashObj?.ToString();
-                if (!string.IsNullOrWhiteSpace(torrentHash))
-                {
-                    return torrentHash;
-                }
-            }
-
-            return null;
         }
 
         private async Task FinalizeProcessedDownloadAsync(DownloadProcessingJob job, IDownloadService downloadService)

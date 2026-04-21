@@ -16,7 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using Listenarr.Domain.Utils;
 
 namespace Listenarr.Domain.Models
 {
@@ -56,6 +58,7 @@ namespace Listenarr.Domain.Models
         public decimal Progress { get; set; }
         public long TotalSize { get; set; }
         public long DownloadedSize { get; set; }
+        // Configured DownloadPath of the client
         public string DownloadPath { get; set; } = string.Empty;
         public string FinalPath { get; set; } = string.Empty;
         public DateTime StartedAt { get; set; }
@@ -93,6 +96,54 @@ namespace Listenarr.Domain.Models
         /// Links to DownloadHistory.Id for audit trail
         /// </summary>
         public int? HistoryId { get; set; }
+
+        public string? GetMetadataString(string key)
+        {
+            if (!Metadata.TryGetValue(key, out var value) || value == null)
+            {
+                return null;
+            }
+
+            if (value is JsonElement element)
+            {
+                return element.ValueKind switch
+                {
+                    JsonValueKind.Null => null,
+                    JsonValueKind.Undefined => null,
+                    _ => element.ToString()
+                };
+            }
+
+            return value.ToString();
+        }
+
+        public string? GetClientDownloadItemId()
+        {
+            if (Metadata == null)
+            {
+                return null;
+            }
+
+            if (Metadata.TryGetValue("ClientDownloadId", out var clientIdObj))
+            {
+                var clientId = clientIdObj?.ToString();
+                if (!string.IsNullOrWhiteSpace(clientId))
+                {
+                    return clientId;
+                }
+            }
+
+            if (Metadata.TryGetValue("TorrentHash", out var torrentHashObj))
+            {
+                var torrentHash = torrentHashObj?.ToString();
+                if (!string.IsNullOrWhiteSpace(torrentHash))
+                {
+                    return torrentHash;
+                }
+            }
+
+            return null;
+        }
     }
 
     /// <summary>
@@ -174,6 +225,67 @@ namespace Listenarr.Domain.Models
         public QueueItem Clone()
         {
             return (QueueItem)MemberwiseClone();
+        }
+
+        public int GetMatchScore(Download download)
+        {
+            if (download == null)
+            {
+                return 0;
+            }
+
+            if (!string.IsNullOrWhiteSpace(download.Id) &&
+                !string.IsNullOrWhiteSpace(Id) &&
+                string.Equals(download.Id, Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return 4;
+            }
+
+            var clientDownloadId = download.GetMetadataString("ClientDownloadId");
+            if (!string.IsNullOrWhiteSpace(clientDownloadId) &&
+                string.Equals(clientDownloadId, Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return 3;
+            }
+
+            var torrentHash = download.GetMetadataString("TorrentHash");
+            if (!string.IsNullOrWhiteSpace(torrentHash) &&
+                string.Equals(torrentHash, Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return 3;
+            }
+
+            if (TitleUtils.TitlesExactlyMatch(download.Title, Title))
+            {
+                return 2;
+            }
+
+            if (TitleUtils.IsMatchingTitle(download.Title, Title))
+            {
+                if (TitleContainsArtist(download))
+                {
+                    return 2;
+                }
+
+                if (TitleUtils.IsStrongStandaloneTitleMatch(download.Title, Title))
+                {
+                    return 1;
+                }
+            }
+
+            return 0;
+        }
+
+        public bool TitleContainsArtist(Download download)
+        {
+            var normalizedArtist = TitleUtils.NormalizeTitle(download?.Artist ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(normalizedArtist) || normalizedArtist.Length < 4)
+            {
+                return false;
+            }
+
+            var normalizedQueueTitle = TitleUtils.NormalizeTitle(Title ?? string.Empty);
+            return normalizedQueueTitle.Contains(normalizedArtist, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

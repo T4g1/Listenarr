@@ -23,6 +23,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Listenarr.Api.Services.Adapters;
 using Listenarr.Domain.Models;
+using Listenarr.Domain.Utils;
 using Listenarr.Infrastructure.Repositories;
 using Microsoft.Extensions.Logging;
 
@@ -205,8 +206,8 @@ namespace Listenarr.Api.Services
             if (string.IsNullOrWhiteSpace(title1) || string.IsNullOrWhiteSpace(title2))
                 return false;
 
-            var norm1 = NormalizeTitle(title1);
-            var norm2 = NormalizeTitle(title2);
+            var norm1 = TitleUtils.NormalizeTitle(title1);
+            var norm2 = TitleUtils.NormalizeTitle(title2);
 
             // Exact match after normalization
             if (string.Equals(norm1, norm2, StringComparison.OrdinalIgnoreCase))
@@ -218,20 +219,6 @@ namespace Listenarr.Api.Services
             var similarity = 1.0 - (double)distance / maxLength;
 
             return similarity >= 0.75; // 75% similarity threshold
-        }
-
-        /// <summary>
-        /// Normalize title for comparison (remove special chars, extra spaces, etc.)
-        /// </summary>
-        private string NormalizeTitle(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-                return string.Empty;
-
-            // Remove special characters, normalize spaces
-            var normalized = System.Text.RegularExpressions.Regex.Replace(title, @"[^\w\s]", " ");
-            normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ");
-            return normalized.Trim().ToLowerInvariant();
         }
 
         /// <summary>

@@ -78,13 +78,11 @@ namespace Listenarr.Api.Tests
                 .Setup(r => r.GetQueueDisplayCandidatesAsync())
                 .ReturnsAsync(downloads
                     .Where(IsQueueDisplayCandidate)
-                    .Select(ToQueueTrackedDownload)
                     .ToList());
             downloadRepoMock
                 .Setup(r => r.GetQueueMatchingCandidatesAsync())
                 .ReturnsAsync(downloads
                     .Where(d => d.DownloadClientId != "DDL" && d.Status != DownloadStatus.Failed)
-                    .Select(ToQueueTrackedDownload)
                     .ToList());
             downloadRepoMock
                 .Setup(r => r.GetKnownClientItemIdsAsync())
@@ -112,24 +110,6 @@ namespace Listenarr.Api.Tests
             {
                 yield return torrentHash.ToString()!;
             }
-        }
-
-        private static QueueTrackedDownload ToQueueTrackedDownload(Download download)
-        {
-            return new QueueTrackedDownload
-            {
-                Id = download.Id,
-                DownloadClientId = download.DownloadClientId,
-                Title = download.Title,
-                Artist = download.Artist,
-                Status = download.Status,
-                StartedAt = download.StartedAt,
-                TotalSize = download.TotalSize,
-                DownloadedSize = download.DownloadedSize,
-                DownloadPath = download.DownloadPath,
-                FinalPath = download.FinalPath,
-                Metadata = download.Metadata
-            };
         }
 
         [Fact]
@@ -223,8 +203,8 @@ namespace Listenarr.Api.Tests
 
             var downloadRepoMock = new Mock<IDownloadRepository>();
             downloadRepoMock.Setup(r => r.GetAllAsync()).ThrowsAsync(new InvalidOperationException("GetAllAsync should not be used by queue reconciliation"));
-            downloadRepoMock.Setup(r => r.GetQueueDisplayCandidatesAsync()).ReturnsAsync(new List<QueueTrackedDownload>());
-            downloadRepoMock.Setup(r => r.GetQueueMatchingCandidatesAsync()).ReturnsAsync(new List<QueueTrackedDownload>());
+            downloadRepoMock.Setup(r => r.GetQueueDisplayCandidatesAsync()).ReturnsAsync(new List<Download>());
+            downloadRepoMock.Setup(r => r.GetQueueMatchingCandidatesAsync()).ReturnsAsync(new List<Download>());
             downloadRepoMock.Setup(r => r.GetKnownClientItemIdsAsync()).ReturnsAsync(new List<string>());
 
             var processingJobRepoMock = new Mock<IDownloadProcessingJobRepository>();

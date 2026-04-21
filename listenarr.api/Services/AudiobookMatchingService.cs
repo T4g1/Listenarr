@@ -17,6 +17,7 @@
  */
 
 using Listenarr.Domain.Models;
+using Listenarr.Domain.Utils;
 using Listenarr.Infrastructure.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
@@ -283,8 +284,8 @@ namespace Listenarr.Api.Services
 
         private double CalculateTitleSimilarity(string title1, string title2)
         {
-            var normalized1 = NormalizeTitle(title1);
-            var normalized2 = NormalizeTitle(title2);
+            var normalized1 = TitleUtils.NormalizeTitle(title1);
+            var normalized2 = TitleUtils.NormalizeTitle(title2);
 
             // Exact match
             if (string.Equals(normalized1, normalized2, StringComparison.OrdinalIgnoreCase))
@@ -303,35 +304,6 @@ namespace Listenarr.Api.Services
             var totalWords = Math.Max(words1.Length, words2.Length);
 
             return totalWords > 0 ? (double)commonWords / totalWords : 0.0;
-        }
-
-        private string NormalizeTitle(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-                return string.Empty;
-
-            // Remove ALL bracketed content [anything] 
-            var result = Regex.Replace(title, @"\[.*?\]", "", RegexOptions.IgnoreCase);
-
-            // Remove ALL parentheses content (anything)
-            result = Regex.Replace(result, @"\(.*?\)", "", RegexOptions.IgnoreCase);
-
-            // Remove curly braces content {anything}
-            result = Regex.Replace(result, @"\{.*?\}", "", RegexOptions.IgnoreCase);
-
-            // Remove common separators and replace with spaces
-            result = Regex.Replace(result, @"[\-_\.]+", " ", RegexOptions.IgnoreCase);
-
-            // Remove common quality/format indicators
-            result = Regex.Replace(result, @"\b(mp3|m4a|m4b|flac|aac|ogg|opus|320|256|128|v0|v2|audiobook|unabridged|abridged)\b", "", RegexOptions.IgnoreCase);
-
-            // Normalize multiple spaces to single spaces
-            result = Regex.Replace(result, @"\s+", " ");
-
-            // Remove trailing/leading spaces, dashes, etc.
-            result = result.Trim(' ', '-', '.', ',');
-
-            return result;
         }
     }
 }

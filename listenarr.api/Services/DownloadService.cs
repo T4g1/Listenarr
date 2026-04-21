@@ -32,6 +32,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using Listenarr.Api.Services.Adapters;
+using Listenarr.Domain.Utils;
 
 namespace Listenarr.Api.Services
 {
@@ -1503,7 +1504,7 @@ namespace Listenarr.Api.Services
                                 .Where(d => d.DownloadClientId == downloadClientId)
                                 .ToListAsync()
                                 .ContinueWith(task => task.Result.FirstOrDefault(d =>
-                                    IsMatchingTitle(d.Title, queueItem.Title)));
+                                    TitleUtils.IsMatchingTitle(d.Title, queueItem.Title)));
                         }
                     }
                 }
@@ -1983,7 +1984,7 @@ namespace Listenarr.Api.Services
                 .Select(download => new
                 {
                     Download = download,
-                    Score = GetQueueMatchScore(download, queueItem)
+                    Score = queueItem.GetMatchScore(download)
                 })
                 .Where(x => x.Score > 0)
                 .OrderByDescending(x => x.Score)
@@ -2024,247 +2025,6 @@ namespace Listenarr.Api.Services
             }
 
             return bestMatch.Download;
-        }
-
-        private int GetQueueMatchScore(Download download, QueueItem queueItem)
-        {
-            if (download == null || queueItem == null)
-            {
-                return 0;
-            }
-
-            if (!string.IsNullOrWhiteSpace(download.Id) &&
-                !string.IsNullOrWhiteSpace(queueItem.Id) &&
-                string.Equals(download.Id, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 4;
-            }
-
-            var clientDownloadId = GetMetadataString(download.Metadata, "ClientDownloadId");
-            if (!string.IsNullOrWhiteSpace(clientDownloadId) &&
-                string.Equals(clientDownloadId, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 3;
-            }
-
-            var torrentHash = GetMetadataString(download.Metadata, "TorrentHash");
-            if (!string.IsNullOrWhiteSpace(torrentHash) &&
-                string.Equals(torrentHash, queueItem.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                return 3;
-            }
-
-            if (TitlesExactlyMatch(download.Title, queueItem.Title))
-            {
-                return 2;
-            }
-
-            if (IsMatchingTitle(download.Title, queueItem.Title))
-            {
-                if (QueueTitleContainsArtist(download, queueItem))
-                {
-                    return 2;
-                }
-
-                if (IsStrongStandaloneTitleMatch(download.Title, queueItem.Title))
-                {
-                    return 1;
-                }
-            }
-
-            return 0;
-        }
-
-        private bool TitlesExactlyMatch(string titleA, string titleB)
-        {
-            var normalizedA = NormalizeTitle(titleA);
-            var normalizedB = NormalizeTitle(titleB);
-
-            return !string.IsNullOrWhiteSpace(normalizedA) &&
-                   string.Equals(normalizedA, normalizedB, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool QueueTitleContainsArtist(Download download, QueueItem queueItem)
-        {
-            var normalizedArtist = NormalizeTitle(download?.Artist ?? string.Empty);
-            if (string.IsNullOrWhiteSpace(normalizedArtist) || normalizedArtist.Length < 4)
-            {
-                return false;
-            }
-
-            var normalizedQueueTitle = NormalizeTitle(queueItem?.Title ?? string.Empty);
-            return normalizedQueueTitle.Contains(normalizedArtist, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private bool IsStrongStandaloneTitleMatch(string titleA, string titleB)
-        {
-            var normalizedA = NormalizeTitle(titleA);
-            var normalizedB = NormalizeTitle(titleB);
-            if (string.IsNullOrWhiteSpace(normalizedA) || string.IsNullOrWhiteSpace(normalizedB))
-            {
-                return false;
-            }
-
-            var shorter = normalizedA.Length <= normalizedB.Length ? normalizedA : normalizedB;
-            var longer = normalizedA.Length <= normalizedB.Length ? normalizedB : normalizedA;
-            var shorterTokenCount = shorter.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-
-            if (shorter.Length >= 15 || shorterTokenCount >= 3)
-            {
-                return true;
-            }
-
-            if (shorter.Length >= 10 &&
-                (longer.StartsWith(shorter + " ", StringComparison.OrdinalIgnoreCase) ||
-                 longer.EndsWith(" " + shorter, StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private bool IsMatchingTitle(string titleA, string titleB)
-        {
-            try
-            {
-                return AreTitlesSimilar(titleA ?? string.Empty, titleB ?? string.Empty);
-            }
-            catch (Exception caughtEx_14) when (caughtEx_14 is not OperationCanceledException && caughtEx_14 is not OutOfMemoryException && caughtEx_14 is not StackOverflowException) {
-                return false;
-            }
-        }
-
-        private bool AreTitlesSimilar(string a, string b)
-        {
-            try
-            {
-                var An = NormalizeTitle(a);
-                var Bn = NormalizeTitle(b);
-
-                if (string.IsNullOrWhiteSpace(An) || string.IsNullOrWhiteSpace(Bn))
-                {
-                    return false;
-                }
-
-                if (An == Bn) return true;
-
-                var shorter = An.Length <= Bn.Length ? An : Bn;
-                var longer = An.Length <= Bn.Length ? Bn : An;
-                var shorterTokens = shorter.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var longerTokens = longer.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-                if (shorterTokens.Length == 0 || longerTokens.Length == 0)
-                {
-                    return false;
-                }
-
-                if (shorterTokens.Length == 1)
-                {
-                    var token = shorterTokens[0];
-                    return token.Length >= 6 &&
-                           longerTokens.Contains(token, StringComparer.OrdinalIgnoreCase);
-                }
-
-                if (longer.Contains(shorter, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-
-                return TokensAppearInOrder(shorterTokens, longerTokens);
-            }
-            catch (Exception caughtEx_15) when (caughtEx_15 is not OperationCanceledException && caughtEx_15 is not OutOfMemoryException && caughtEx_15 is not StackOverflowException) { return false; }
-        }
-
-        private string NormalizeTitle(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-            var lower = s.ToLowerInvariant();
-            lower = Regex.Replace(lower, @"[\[\]\(\)\{\}_\.-]+", " ");
-            lower = Regex.Replace(lower, @"\b\d{2,4}\s*kbps\b", " ");
-            lower = Regex.Replace(lower, @"\b(mp3|m4a|m4b|flac|aac|ogg|opus|audiobook|unabridged|abridged)\b", " ");
-            lower = Regex.Replace(lower, @"\b(19|20)\d{2}\b", " ");
-            var cleaned = new string(lower.Where(ch => char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch)).ToArray());
-            return string.Join(' ', cleaned.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
-        }
-
-        private static bool TokensAppearInOrder(string[] shorterTokens, string[] longerTokens)
-        {
-            if (shorterTokens == null || longerTokens == null || shorterTokens.Length == 0 || longerTokens.Length == 0)
-            {
-                return false;
-            }
-
-            var longerIndex = 0;
-            foreach (var token in shorterTokens)
-            {
-                var found = false;
-                while (longerIndex < longerTokens.Length)
-                {
-                    if (string.Equals(token, longerTokens[longerIndex], StringComparison.OrdinalIgnoreCase))
-                    {
-                        found = true;
-                        longerIndex++;
-                        break;
-                    }
-
-                    longerIndex++;
-                }
-
-                if (!found)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static string? GetMetadataString(Dictionary<string, object>? metadata, string key)
-        {
-            if (metadata == null || !metadata.TryGetValue(key, out var value) || value == null)
-            {
-                return null;
-            }
-
-            if (value is JsonElement element)
-            {
-                return element.ValueKind switch
-                {
-                    JsonValueKind.Null => null,
-                    JsonValueKind.Undefined => null,
-                    _ => element.ToString()
-                };
-            }
-
-            return value.ToString();
-        }
-
-        // Standard Levenshtein distance implementation (copied from SearchService for local use)
-        private static int LevenshteinDistance(string s, string t)
-        {
-            if (s == t) return 0;
-            if (string.IsNullOrEmpty(s)) return t.Length;
-            if (string.IsNullOrEmpty(t)) return s.Length;
-
-            var n = s.Length;
-            var m = t.Length;
-            var d = new int[n + 1, m + 1];
-
-            for (int i = 0; i <= n; d[i, 0] = i++) { }
-            for (int j = 0; j <= m; d[0, j] = j++) { }
-
-            for (int i = 1; i <= n; i++)
-            {
-                for (int j = 1; j <= m; j++)
-                {
-                    int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
-                    d[i, j] = Math.Min(
-                        Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1),
-                        d[i - 1, j - 1] + cost);
-                }
-            }
-            return d[n, m];
         }
 
         private async Task<bool> RemoveFromClientAsync(DownloadClientConfiguration client, string downloadId, Download? downloadRecord = null)

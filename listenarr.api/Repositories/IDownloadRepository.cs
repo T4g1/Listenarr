@@ -12,8 +12,8 @@ namespace Listenarr.Api.Repositories
         Task UpdateMetadataAsync(string id, string key, object? value);
         Task RemoveAsync(string id);
         Task<List<Download>> GetAllAsync();
-        Task<List<QueueTrackedDownload>> GetQueueDisplayCandidatesAsync();
-        Task<List<QueueTrackedDownload>> GetQueueMatchingCandidatesAsync();
+        Task<List<Download>> GetQueueDisplayCandidatesAsync();
+        Task<List<Download>> GetQueueMatchingCandidatesAsync();
         Task<List<string>> GetKnownClientItemIdsAsync();
         Task<List<Download>> GetByClientAsync(string clientId);
         Task<List<Download>> GetByIdsAsync(IEnumerable<string> ids);
