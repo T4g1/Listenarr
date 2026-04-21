@@ -73,6 +73,30 @@ namespace Listenarr.Domain.Utils
             return TokensAppearInOrder(shorterTokens, longerTokens);
         }
 
+        /// <summary>
+        /// Check if two titles are similar (normalized comparison)
+        /// </summary>
+        // FIXME: Keep only one ?
+        public static bool AreTitlesSimilarWithLevenstein(string title1, string title2)
+        {
+            if (string.IsNullOrWhiteSpace(title1) || string.IsNullOrWhiteSpace(title2))
+                return false;
+
+            var norm1 = TitleUtils.NormalizeTitle(title1);
+            var norm2 = TitleUtils.NormalizeTitle(title2);
+
+            // Exact match after normalization
+            if (string.Equals(norm1, norm2, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Fuzzy match with Levenshtein distance (25% threshold)
+            var distance = StringUtils.LevenshteinDistance(norm1, norm2);
+            var maxLength = Math.Max(norm1.Length, norm2.Length);
+            var similarity = 1.0 - (double)distance / maxLength;
+
+            return similarity >= 0.75; // 75% similarity threshold
+        }
+
         private static bool TokensAppearInOrder(string[] shorterTokens, string[] longerTokens)
         {
             if (shorterTokens == null || longerTokens == null || shorterTokens.Length == 0 || longerTokens.Length == 0)
