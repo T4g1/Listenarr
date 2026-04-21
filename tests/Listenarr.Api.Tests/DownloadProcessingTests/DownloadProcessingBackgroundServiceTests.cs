@@ -42,9 +42,16 @@ namespace Listenarr.Api.Tests
 
         [Fact]
         [Trait("Method", "EnqueueCompletedDownloadsAsync")]
-        [Trait("Scenario", "Happy path")]
+        [Trait("Scenario", "Space in directory where downloaded files are located")]
+        [Trait("OSPlatform", "Linux")]
+        [Trait("OSPlatform", "OSX")]
         public async Task EnqueueCompletedDownloadsAsync_SpaceInFinalPath()
         {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return;
+            }
+            
             var remoteSource = GetTempDirectory("dl-remote-source ");
             var localSource = GetTempDirectory("dl-local-source ");
             var localDestination = GetTempDirectory("dl-destination");
