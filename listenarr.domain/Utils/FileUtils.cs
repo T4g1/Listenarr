@@ -654,6 +654,31 @@ namespace Listenarr.Domain.Utils
             normalized = normalized.Trim();
             return normalized.Length == 0 ? "unknown" : normalized;
         }
+
+        public static string CombineWithOptionalBase(string? basePath, string candidatePath)
+        {
+            if (string.IsNullOrEmpty(candidatePath))
+            {
+                return candidatePath;
+            }
+
+            if (Path.IsPathRooted(candidatePath) || string.IsNullOrWhiteSpace(basePath))
+            {
+                return candidatePath;
+            }
+
+            
+            var relativePath = candidatePath.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (Path.IsPathRooted(relativePath))
+            {
+                return relativePath;
+            }
+
+            var normalizedBasePath = basePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.IsNullOrEmpty(normalizedBasePath)
+                ? relativePath
+                : Path.Join(normalizedBasePath, relativePath);
+        }
     }
 }
 

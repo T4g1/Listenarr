@@ -12,6 +12,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
+using Listenarr.Domain.Utils;
 using Microsoft.Extensions.Logging;
 
 namespace Listenarr.Api.Services.Adapters
@@ -517,7 +518,7 @@ namespace Listenarr.Api.Services.Adapters
                 }
 
                 // Transmission stores files as: downloadDir/name
-                var contentPath = CombineWithOptionalBase(downloadDir, name);
+                var contentPath = FileUtils.CombineWithOptionalBase(downloadDir, name);
                 
                 // Apply path mapping
                 var localContentPath = await _pathMappingService.TranslatePathAsync(client.Id, contentPath);
@@ -604,7 +605,7 @@ namespace Listenarr.Api.Services.Adapters
 
                 // Transmission stores files as: downloadDir/name
                 var contentPath = !string.IsNullOrWhiteSpace(downloadDir) && !string.IsNullOrWhiteSpace(name)
-                    ? CombineWithOptionalBase(downloadDir, name)
+                    ? FileUtils.CombineWithOptionalBase(downloadDir, name)
                     : resolvedExistingContentPath;
                 string? localContentPath = resolvedExistingContentPath;
                 if (!string.IsNullOrWhiteSpace(contentPath))
@@ -655,7 +656,7 @@ namespace Listenarr.Api.Services.Adapters
                     continue;
                 }
 
-                sourceFiles.Add(CombineWithOptionalBase(downloadDir, relativePath));
+                sourceFiles.Add(FileUtils.CombineWithOptionalBase(downloadDir, relativePath));
             }
 
             return sourceFiles;
@@ -747,7 +748,7 @@ namespace Listenarr.Api.Services.Adapters
 
             // For Transmission, construct ContentPath from downloadDir + name
             var contentPath = !string.IsNullOrEmpty(downloadDir) && !string.IsNullOrEmpty(name)
-                ? CombineWithOptionalBase(downloadDir, name)
+                ? FileUtils.CombineWithOptionalBase(downloadDir, name)
                 : downloadDir;
             var localContentPath = !string.IsNullOrEmpty(contentPath)
                 ? await _pathMappingService.TranslatePathAsync(client.Id, contentPath)
@@ -838,7 +839,7 @@ namespace Listenarr.Api.Services.Adapters
 
             // For Transmission, construct OutputPath from downloadDir + name
             var contentPath = !string.IsNullOrEmpty(downloadDir) && !string.IsNullOrEmpty(name)
-                ? CombineWithOptionalBase(downloadDir, name)
+                ? FileUtils.CombineWithOptionalBase(downloadDir, name)
                 : downloadDir;
             var localContentPath = !string.IsNullOrEmpty(contentPath)
                 ? await _pathMappingService.TranslatePathAsync(client.Id, contentPath)
@@ -1179,32 +1180,6 @@ namespace Listenarr.Api.Services.Adapters
             }
 
             return $"{magnetUri[..(queryStart + 1)]}{string.Join("&", segments)}";
-        }
-
-        private static string CombineWithOptionalBase(string? basePath, string candidatePath)
-        {
-            var normalizedPath = candidatePath.Trim();
-
-            if (string.IsNullOrEmpty(normalizedPath))
-            {
-                return normalizedPath;
-            }
-
-            if (Path.IsPathRooted(normalizedPath) || string.IsNullOrWhiteSpace(basePath))
-            {
-                return normalizedPath;
-            }
-
-            var relativePath = normalizedPath.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (Path.IsPathRooted(relativePath))
-            {
-                return relativePath;
-            }
-
-            var normalizedBasePath = basePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return string.IsNullOrEmpty(normalizedBasePath)
-                ? relativePath
-                : normalizedBasePath + Path.DirectorySeparatorChar + relativePath;
         }
 
         private static AuthenticationHeaderValue? BuildAuthHeader(DownloadClientConfiguration client)
