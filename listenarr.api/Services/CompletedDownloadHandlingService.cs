@@ -133,11 +133,9 @@ namespace Listenarr.Api.Services
 
             try
             {
-                // Find all downloads that are Completed/ImportPending but not yet imported (FinalPath still empty)
+                // Find all downloads that are Completed/ImportPending
                 var completedDownloads = await dbContext.Downloads
-                    .Where(d =>
-                        (d.Status == DownloadStatus.Completed || d.Status == DownloadStatus.ImportPending) &&
-                        string.IsNullOrEmpty(d.FinalPath))
+                    .Where(d => d.Status == DownloadStatus.Completed || d.Status == DownloadStatus.ImportPending)
                     .ToListAsync(cancellationToken);
 
                 // Skip completed downloads for disabled/missing external clients.

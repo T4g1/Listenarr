@@ -77,7 +77,7 @@ namespace Listenarr.Api.Repositories
                 .AsNoTracking()
                 .Where(d => d.DownloadClientId != "DDL")
                 .Where(d => d.Status != DownloadStatus.Moved && d.Status != DownloadStatus.Failed)
-                .Where(d => d.Status != DownloadStatus.Completed || string.IsNullOrEmpty(d.FinalPath))
+                .Where(d => d.Status != DownloadStatus.Completed)
                 .ToListAsync();
             return ddl.Concat(nonDdl).ToList();
         }

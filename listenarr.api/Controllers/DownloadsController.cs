@@ -1,10 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Listenarr.Domain.Models;
 using Listenarr.Api.Services;
-using System.Linq;
 using Listenarr.Infrastructure.Models;
 using Microsoft.Extensions.Caching.Memory;
+using Listenarr.Api.Models;
 
 namespace Listenarr.Api.Controllers;
 
@@ -92,7 +91,7 @@ public class DownloadsController : ControllerBase
                 .OrderByDescending(d => d.StartedAt)
                 .ToListAsync();
 
-            var enhancedDownloads = await EnhanceDownloadsWithClientNames(downloads);
+            var enhancedDownloads = await GetDownloadDto(downloads);
 
             _logger.LogInformation("Retrieved {Count} downloads", downloads.Count);
             return Ok(enhancedDownloads);
@@ -108,42 +107,21 @@ public class DownloadsController : ControllerBase
     /// </summary>
     /// <param name="id">Download record ID.</param>
     [HttpGet("{id}")]
-    public async Task<ActionResult<Download>> GetDownload(string id)
+    public async Task<ActionResult<DownloadDto>> GetDownload(string id)
     {
         try
         {
             var download = await _dbContext.Downloads.FindAsync(id);
-
-            if (download == null)
+            try
             {
-                return NotFound(new { error = "Download not found", id });
+                if (download == null) throw new ArgumentException($"Download not found");
+
+                return Ok(await GetDownloadDto(download));
             }
-
-            // Remove downloadPath before returning to client
-            var downloadObj = new
+            catch(ArgumentException exception)
             {
-                id = download.Id,
-                audiobookId = download.AudiobookId,
-                title = download.Title,
-                artist = download.Artist,
-                album = download.Album,
-                originalUrl = download.OriginalUrl,
-                status = download.Status.ToString(),
-                progress = download.Progress,
-                totalSize = download.TotalSize,
-                downloadedSize = download.DownloadedSize,
-                finalPath = download.FinalPath,
-                startedAt = download.StartedAt,
-                completedAt = download.CompletedAt,
-                errorMessage = download.ErrorMessage,
-                downloadClientId = download.DownloadClientId,
-                metadata = download.Metadata,
-                importBlockReason = download.ImportBlockReason,
-                importBlockMessages = download.ImportBlockMessages,
-                importAttempts = download.ImportAttempts
-            };
-
-            return Ok(downloadObj);
+                return NotFound(new { error = exception.Message, id });
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException) {
             _logger.LogError(ex, "Error retrieving download {DownloadId}", LogRedaction.SanitizeText(id));
@@ -223,7 +201,7 @@ public class DownloadsController : ControllerBase
                 .OrderByDescending(d => d.StartedAt)
                 .ToListAsync();
 
-            var enhancedActiveDownloads = await EnhanceDownloadsWithClientNames(activeDownloads);
+            var enhancedActiveDownloads = await GetDownloadDto(activeDownloads);
 
             _logger.LogInformation("Retrieved {Count} active downloads", activeDownloads.Count);
             return Ok(enhancedActiveDownloads);
@@ -312,56 +290,30 @@ public class DownloadsController : ControllerBase
     }
 
     /// <summary>
-    /// Enhance downloads with resolved client names
+    /// Transform a given set of downloads into a set of DTO for API usage
     /// </summary>
-    private async Task<List<object>> EnhanceDownloadsWithClientNames(List<Download> downloads)
+    private async Task<List<DownloadDto>> GetDownloadDto(List<Download> downloads)
     {
         var downloadClients = await _configurationService.GetDownloadClientConfigurationsAsync();
-        var clientLookup = downloadClients.ToDictionary(c => c.Id, c => c.Name);
+        var clientsById = downloadClients.ToDictionary(c => c.Id, c => c);
 
-        return downloads.Select(d =>
+        return [.. downloads.Select(download =>
         {
-            // Remove any client-local content path information before returning to the frontend.
-            // Server keeps `DownloadPath`/metadata internally for mapping/monitoring, but must not transmit
-            // client-local paths (for example ClientContentPath) to user browsers.
-            object? sanitizedMetadata = null;
-            if (d.Metadata != null)
+            clientsById.TryGetValue(download.DownloadClientId, out var client);
+            if (client == null && download.DownloadClientId == "DDL")
             {
-                var dict = new Dictionary<string, object>();
-                foreach (var kvp in d.Metadata.Where(kvp => !string.Equals(kvp.Key, "ClientContentPath", StringComparison.OrdinalIgnoreCase)))
+                client = new DownloadClientConfiguration
                 {
-                    dict[kvp.Key] = kvp.Value!;
-                }
-                sanitizedMetadata = dict;
+                    Name = "Direct Download"
+                };
             }
 
-            return new
-            {
-                id = d.Id,
-                audiobookId = d.AudiobookId,
-                title = d.Title,
-                artist = d.Artist,
-                album = d.Album,
-                originalUrl = d.OriginalUrl,
-                status = d.Status.ToString(),
-                progress = d.Progress,
-                totalSize = d.TotalSize,
-                downloadedSize = d.DownloadedSize,
-                finalPath = d.FinalPath,
-                startedAt = d.StartedAt,
-                completedAt = d.CompletedAt,
-                errorMessage = d.ErrorMessage,
-                downloadClientId = d.DownloadClientId,
-                downloadClientName = d.DownloadClientId == "DDL" ? "Direct Download" :
-                                   clientLookup.TryGetValue(d.DownloadClientId, out var clientName) ? clientName : "Unknown Client",
-                metadata = sanitizedMetadata,
-                // Sprint 2: Error handling and import blocking fields
-                importBlockReason = d.ImportBlockReason,
-                importBlockMessages = d.ImportBlockMessages,
-                importAttempts = d.ImportAttempts
-            };
-        }).Cast<object>().ToList();
+            return DownloadDto.CreateFrom(download, client);
+        })];
+    }
+    
+    private async Task<DownloadDto> GetDownloadDto(Download download)
+    {
+        return (await GetDownloadDto([download]))[0];
     }
 }
-
-

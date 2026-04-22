@@ -65,6 +65,25 @@ namespace Listenarr.Domain.Models
         /// Optional data payload (JSON string for additional context)
         /// </summary>
         public string? Data { get; set; }
+
+        public static History CreateEntryFrom(Download download, DownloadClientConfiguration client, Audiobook audiobook)
+        {
+            return new History
+            {
+                AudiobookId = download.AudiobookId,
+                AudiobookTitle = download.Title,
+                EventType = "Imported",
+                Message = $"Automatically imported from {client.Name}",
+                Source = "AutoImport",
+                Timestamp = DateTime.UtcNow,
+                NotificationSent = false,
+                Data = System.Text.Json.JsonSerializer.Serialize(new { 
+                    DownloadId = download.Id,
+                    ClientName = client.Name,
+                    Path = audiobook.BasePath
+                })
+            };
+        }
     }
 }
 

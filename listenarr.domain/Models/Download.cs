@@ -60,12 +60,11 @@ namespace Listenarr.Domain.Models
         public long DownloadedSize { get; set; }
         // Configured DownloadPath of the client
         public string DownloadPath { get; set; } = string.Empty;
-        public string FinalPath { get; set; } = string.Empty;
         public DateTime StartedAt { get; set; }
         public DateTime? CompletedAt { get; set; }
         public string? ErrorMessage { get; set; }
         public string DownloadClientId { get; set; } = string.Empty;
-        public Dictionary<string, object> Metadata { get; set; } = new();
+        public Dictionary<string, object> Metadata { get; set; } = [];
 
         /// <summary>
         /// Tracks why a download is ImportBlocked (error code for categorization)
@@ -96,6 +95,37 @@ namespace Listenarr.Domain.Models
         /// Links to DownloadHistory.Id for audit trail
         /// </summary>
         public int? HistoryId { get; set; }
+
+        /// <summary>
+        // Filter metadata for API usage
+        /// </summary>
+        /// <param name="additionalFiltering">List of additional key to filter</param>
+        /// <returns>Filtered metadata with removed selected keys</returns>
+        public Dictionary<string, object> GetFilteredMetadata(string[]? additionalFiltering = null)
+        {
+            string[] privateKeys = [
+                "ClientContentPath"
+            ];
+
+            Dictionary<string, object> filteredMetadata = [];
+            if (Metadata != null)
+            {
+                foreach (KeyValuePair<string, object> entry in Metadata)
+                {
+                    if (privateKeys.Contains(entry.Key)) continue;
+                    if (additionalFiltering != null && additionalFiltering.Contains(entry.Key)) continue;
+
+                    filteredMetadata[entry.Key] = entry.Value;
+                }
+            }
+
+            return filteredMetadata;
+        }
+        
+        // Remove any client-local content path information before returning to the frontend.
+            // Server keeps `DownloadPath`/metadata internally for mapping/monitoring, but must not transmit
+            // client-local paths (for example ClientContentPath) to user browsers.
+            
 
         public string? GetMetadataString(string key)
         {
