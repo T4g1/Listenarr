@@ -18,7 +18,7 @@
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Infrastructure.Models;
 using Listenarr.Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;

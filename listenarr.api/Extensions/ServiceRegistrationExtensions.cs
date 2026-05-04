@@ -20,6 +20,7 @@ using System.Net;
 using Polly;
 using Polly.Extensions.Http;
 using Microsoft.Extensions.Options;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Extensions
 {
@@ -199,7 +200,7 @@ namespace Listenarr.Api.Extensions
             services.AddScoped<IDownloadClientAdapterFactory, DownloadClientAdapterFactory>();
 
             // Register import item resolution service (ProvideImportItemService pattern)
-            services.AddScoped<IImportItemResolutionService, ImportItemResolutionService>();
+            services.AddScoped<IDownloadItemService, DownloadItemService>();
 
             // Register notification payload builder adapter for DI so callers can inject/mokc payload construction.
             services.AddSingleton<INotificationPayloadBuilder, NotificationPayloadBuilderAdapter>();

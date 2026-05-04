@@ -16,19 +16,11 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Text.RegularExpressions;
+using Listenarr.Domain.Models;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Domain.Common
 {
-    internal sealed class PlannedImportFile
-    {
-        public string FullPath { get; init; } = string.Empty;
-        public string? RelativePath { get; init; }
-        public int SequenceNumber { get; init; }
-        public int? DiskNumberHint { get; init; }
-        public int? ChapterNumberHint { get; init; }
-    }
-
-    internal static class MultiFileImportPlanner
+    public static class MultiFileImportPlanner
     {
         private static readonly Regex NumericChunkPattern = new(@"\d+|\D+", RegexOptions.Compiled);
         private static readonly Regex DiskPattern = new(

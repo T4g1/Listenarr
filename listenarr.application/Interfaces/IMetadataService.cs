@@ -16,7 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-namespace Listenarr.Api.Services.Metadata
+using Listenarr.Domain.Models;
+
+namespace Listenarr.Application.Interfaces
 {
     /// <summary>
     /// Provides metadata retrieval and file tagging for audiobook files

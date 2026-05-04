@@ -1,11 +1,11 @@
 using System.Reflection;
 using Asp.Versioning.ApiExplorer;
 using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
 using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Models;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace Listenarr.Tests.Common
@@ -23,14 +23,6 @@ namespace Listenarr.Tests.Common
                 ?? provider?.ApiVersionDescriptions.FirstOrDefault()?.GroupName;
 
             return string.IsNullOrWhiteSpace(groupName) ? "/api/v1" : $"/api/{groupName}";
-        }
-
-        public static DownloadProcessingBackgroundService GetDownloadProcessingBackgroundService()
-        {
-            return new DownloadProcessingBackgroundService(
-                new Mock<IServiceScopeFactory>().Object,
-                new Mock<ILogger<DownloadProcessingBackgroundService>>().Object,
-                new Mock<IAppMetricsService>().Object);
         }
 
         public static async Task<DownloadProcessingJob?> ProcessJobAsync(DownloadProcessingBackgroundService downloadProcessingBackgroundService, ListenArrDbContext db, Download download, QueueItem item, DownloadClientConfiguration client)

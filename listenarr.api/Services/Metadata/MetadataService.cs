@@ -17,6 +17,8 @@
  */
 
 using System.Text.Json;
+using Listenarr.Application.Common;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Services.Metadata
 {

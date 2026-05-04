@@ -19,19 +19,16 @@ using System.Net;
 using System.Text;
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Models;
-using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
 using Listenarr.Domain.Models;
-using Listenarr.Infrastructure.Models;
-using Listenarr.Infrastructure.Repositories;
+using Listenarr.Tests.Common;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using Moq;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 {
-    public class IndexersControllerProwlarrImportTests
+    public class IndexersControllerProwlarrImportTests : BaseTests
     {
         private sealed class CaptureHandler : HttpMessageHandler
         {
@@ -54,55 +51,31 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
             }
         }
 
-        private sealed class ControllerHarness : IDisposable
+        private sealed class ControllerHarness
         {
-            private readonly LoggerFactory _loggerFactory;
-            private readonly ListenArrDbContext _db;
-            private readonly HttpClient _client;
-            private readonly ConfigurationService _configurationService;
+            private readonly IConfigurationService _configurationService;
 
-            public ControllerHarness(CaptureHandler handler)
+            public ControllerHarness(ServiceProvider provider, CaptureHandler? handler = null)
             {
-                Handler = handler;
-                var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                    .UseInMemoryDatabase($"prowlarr-import-{Guid.NewGuid()}")
-                    .Options;
+                if (handler == null)
+                {
+                    handler = new CaptureHandler();
+                }
 
-                _db = new ListenArrDbContext(options);
-                _loggerFactory = new LoggerFactory();
-                _client = new HttpClient(handler);
-                _configurationService = new ConfigurationService(
-                    new EfApplicationSettingsRepository(_db),
-                    new EfApiConfigurationRepository(_db),
-                    new EfDownloadClientConfigurationRepository(_db),
-                    _loggerFactory.CreateLogger<ConfigurationService>(),
-                    new Mock<IUserService>().Object,
-                    new Mock<IStartupConfigService>().Object);
-                Controller = new IndexersController(
-                    new EfIndexerRepository(_db),
-                    _loggerFactory.CreateLogger<IndexersController>(),
-                    _client,
-                    _configurationService);
+                Handler = handler;
+                _configurationService = provider.GetRequiredService<IConfigurationService>();
+                Controller = MockUtils.CreateIndexersController(provider, handler);
             }
 
             public CaptureHandler Handler { get; }
-            public ListenArrDbContext Db => _db;
-            public ConfigurationService ConfigurationService => _configurationService;
+            public IConfigurationService ConfigurationService => _configurationService;
             public IndexersController Controller { get; }
-
-            public void Dispose()
-            {
-                _client.Dispose();
-                Handler.Dispose();
-                _db.Dispose();
-                _loggerFactory.Dispose();
-            }
         }
 
         [Fact]
         public async Task ImportFromProwlarr_AcceptsEmbeddedPortInHostField_WhenSchemeOmitted()
         {
-            using var harness = new ControllerHarness(new CaptureHandler());
+            var harness = new ControllerHarness(_provider);
 
             var result = await harness.Controller.ImportFromProwlarr(new ProwlarrImportRequest
             {
@@ -118,7 +91,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
         [Fact]
         public async Task ImportFromProwlarr_BuildsFromHostAndSeparatePortField()
         {
-            using var harness = new ControllerHarness(new CaptureHandler());
+            var harness = new ControllerHarness(_provider);
 
             var result = await harness.Controller.ImportFromProwlarr(new ProwlarrImportRequest
             {
@@ -135,7 +108,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
         [Fact]
         public async Task ImportFromProwlarr_HonorsExplicitHttpsScheme_WhenProvided()
         {
-            using var harness = new ControllerHarness(new CaptureHandler());
+            var harness = new ControllerHarness(_provider);
 
             var result = await harness.Controller.ImportFromProwlarr(new ProwlarrImportRequest
             {
@@ -152,7 +125,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
         [Fact]
         public async Task ImportFromProwlarr_UsesSavedApiKey_WhenRequestOmitsApiKey()
         {
-            using var harness = new ControllerHarness(new CaptureHandler());
+            var harness = new ControllerHarness(_provider);
 
             await harness.ConfigurationService.SaveProwlarrImportSettingsAsync(new ProwlarrImportConnectionSettings
             {
@@ -177,7 +150,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
         [Fact]
         public async Task ImportFromProwlarr_WhenRequestClearsSavedPort_DoesNotReuseStoredPort()
         {
-            using var harness = new ControllerHarness(new CaptureHandler());
+            var harness = new ControllerHarness(_provider);
 
             await harness.ConfigurationService.SaveProwlarrImportSettingsAsync(new ProwlarrImportConnectionSettings
             {
@@ -224,7 +197,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
                 ]
                 """;
 
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 var path = request.RequestUri?.AbsolutePath ?? string.Empty;
                 if (path.EndsWith("/api/v1/tag", StringComparison.OrdinalIgnoreCase))
@@ -252,7 +225,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
             var ok = Assert.IsType<OkObjectResult>(result);
             Assert.NotNull(ok.Value);
 
-            var imported = await harness.Db.Indexers.AsNoTracking().SingleAsync();
+            var imported = (await _indexerRepository.GetAllAsync()).First();
             Assert.Equal("Tagged Indexer (Prowlarr)", imported.Name);
             Assert.Equal("Torznab", imported.Implementation);
             Assert.Equal("tag-key", imported.ApiKey);
@@ -280,7 +253,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
                 ]
                 """;
 
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 var path = request.RequestUri?.AbsolutePath ?? string.Empty;
                 if (path.EndsWith("/api/v1/tag", StringComparison.OrdinalIgnoreCase))
@@ -314,7 +287,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 
             Assert.IsType<OkObjectResult>(result);
 
-            var imported = await harness.Db.Indexers.AsNoTracking().SingleAsync();
+            var imported = (await _indexerRepository.GetAllAsync()).First();
             Assert.Equal("Saved Tag Indexer (Prowlarr)", imported.Name);
             Assert.Equal("saved-tag-key", imported.ApiKey);
             Assert.Equal(string.Empty, imported.Categories);
@@ -336,7 +309,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
                 ]
                 """;
 
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 var path = request.RequestUri?.AbsolutePath ?? string.Empty;
                 if (path.EndsWith("/api/v1/tag", StringComparison.OrdinalIgnoreCase))
@@ -363,7 +336,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 
             var objectResult = Assert.IsType<ObjectResult>(result);
             Assert.Equal((int)HttpStatusCode.BadGateway, objectResult.StatusCode);
-            Assert.Empty(await harness.Db.Indexers.AsNoTracking().ToListAsync());
+            Assert.Empty(await _indexerRepository.GetAllAsync());
         }
 
         [Fact]
@@ -382,7 +355,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
                 ]
                 """;
 
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 var path = request.RequestUri?.AbsolutePath ?? string.Empty;
                 if (path.EndsWith("/api/v1/tag", StringComparison.OrdinalIgnoreCase))
@@ -409,7 +382,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 
             Assert.IsType<OkObjectResult>(result);
 
-            var imported = await harness.Db.Indexers.AsNoTracking().SingleAsync();
+            var imported = (await _indexerRepository.GetAllAsync()).First();
             Assert.Equal("Named Tag Indexer (Prowlarr)", imported.Name);
             Assert.Equal("Torznab", imported.Implementation);
         }
@@ -435,7 +408,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
                 ]
                 """;
 
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 var path = request.RequestUri?.AbsolutePath ?? string.Empty;
                 if (path.EndsWith("/api/v1/tag", StringComparison.OrdinalIgnoreCase))
@@ -470,7 +443,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 
             Assert.IsType<OkObjectResult>(result);
 
-            var imported = await harness.Db.Indexers.AsNoTracking().SingleAsync();
+            var imported = (await _indexerRepository.GetAllAsync()).First();
             Assert.Equal("Category Indexer (Prowlarr)", imported.Name);
             Assert.Equal("Newznab", imported.Implementation);
             Assert.Equal("3030", imported.Categories);
@@ -482,7 +455,7 @@ namespace Listenarr.Tests.Features.Api.Services.Search.Providers
         [Fact]
         public async Task ImportFromProwlarr_WhenReplacementCredentialsFail_PreservesSavedConnectionSettings()
         {
-            using var harness = new ControllerHarness(new CaptureHandler(request =>
+            var harness = new ControllerHarness(_provider, new CaptureHandler(request =>
             {
                 if (request.Headers.TryGetValues("X-Api-Key", out var values)
                     && values.Contains("bad-key"))

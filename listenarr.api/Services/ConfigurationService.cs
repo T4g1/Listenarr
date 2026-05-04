@@ -17,50 +17,32 @@
  */
 
 using System.Text.Json;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 using Microsoft.AspNetCore.DataProtection;
 
 namespace Listenarr.Api.Services
 {
-    public class ConfigurationService : IConfigurationService
+    public class ConfigurationService(
+        IApplicationSettingsRepository settingsRepository,
+        IApiConfigurationRepository apiConfigRepository,
+        IDownloadClientConfigurationRepository downloadClientRepository,
+        ILogger<ConfigurationService> logger,
+        IUserService userService,
+        IStartupConfigService startupConfigService,
+        IRootFolderRepository rootFolderRepository,
+        IDataProtector dataProtector) : IConfigurationService
     {
-        private readonly IApplicationSettingsRepository _settingsRepository;
-        private readonly IApiConfigurationRepository _apiConfigRepository;
-        private readonly IDownloadClientConfigurationRepository _downloadClientRepository;
-        private readonly ILogger<ConfigurationService> _logger;
-        private readonly IUserService _userService;
-        private readonly IStartupConfigService _startupConfigService;
-        private readonly IDataProtector _prowlarrImportProtector;
-
-        public ConfigurationService(
-            IApplicationSettingsRepository settingsRepository,
-            IApiConfigurationRepository apiConfigRepository,
-            IDownloadClientConfigurationRepository downloadClientRepository,
-            ILogger<ConfigurationService> logger,
-            IUserService userService,
-            IStartupConfigService startupConfigService,
-            IDataProtectionProvider? dataProtectionProvider = null)
-        {
-            _settingsRepository = settingsRepository;
-            _apiConfigRepository = apiConfigRepository;
-            _downloadClientRepository = downloadClientRepository;
-            _logger = logger;
-            _userService = userService;
-            _startupConfigService = startupConfigService;
-            _prowlarrImportProtector =
-                (dataProtectionProvider ?? new EphemeralDataProtectionProvider())
-                    .CreateProtector("Listenarr.ConfigurationService.ProwlarrImport");
-        }
-
         // API Configuration methods
         public async Task<List<ApiConfiguration>> GetApiConfigurationsAsync()
         {
             try
             {
-                return await _apiConfigRepository.GetAllAsync();
+                return await apiConfigRepository.GetAllAsync();
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error loading API configurations from database");
+                logger.LogError(ex, "Error loading API configurations from database");
                 return new List<ApiConfiguration>();
             }
         }
@@ -69,11 +51,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                return await _apiConfigRepository.GetByIdAsync(id);
+                return await apiConfigRepository.GetByIdAsync(id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error loading API configuration {Id} from database", id);
+                logger.LogError(ex, "Error loading API configuration {Id} from database", id);
                 return null;
             }
         }
@@ -82,12 +64,12 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var saved = await _apiConfigRepository.SaveAsync(config);
+                var saved = await apiConfigRepository.SaveAsync(config);
                 return saved.Id;
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error saving API configuration to database");
+                logger.LogError(ex, "Error saving API configuration to database");
                 throw;
             }
         }
@@ -96,11 +78,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                return await _apiConfigRepository.DeleteAsync(id);
+                return await apiConfigRepository.DeleteAsync(id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error deleting API configuration from database");
+                logger.LogError(ex, "Error deleting API configuration from database");
                 return false;
             }
         }
@@ -110,11 +92,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                return await _downloadClientRepository.GetAllAsync();
+                return await downloadClientRepository.GetAllAsync();
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error loading download client configurations from database");
+                logger.LogError(ex, "Error loading download client configurations from database");
                 return new List<DownloadClientConfiguration>();
             }
         }
@@ -123,11 +105,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                return await _downloadClientRepository.GetByIdAsync(id);
+                return await downloadClientRepository.GetByIdAsync(id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error loading download client configuration {Id} from database", id);
+                logger.LogError(ex, "Error loading download client configuration {Id} from database", id);
                 return null;
             }
         }
@@ -136,12 +118,12 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var saved = await _downloadClientRepository.SaveAsync(config);
+                var saved = await downloadClientRepository.SaveAsync(config);
                 return saved.Id;
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error saving download client configuration to database");
+                logger.LogError(ex, "Error saving download client configuration to database");
                 throw;
             }
         }
@@ -150,11 +132,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                return await _downloadClientRepository.DeleteAsync(id);
+                return await downloadClientRepository.DeleteAsync(id);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error deleting download client configuration from database");
+                logger.LogError(ex, "Error deleting download client configuration from database");
                 return false;
             }
         }
@@ -164,23 +146,39 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var settings = await _settingsRepository.GetAsync();
+                var settings = await settingsRepository.GetAsync();
 
                 if (settings == null)
                 {
                     settings = new ApplicationSettings();
-                    await _settingsRepository.SaveAsync(settings);
+                    await settingsRepository.SaveAsync(settings);
                 }
 
-                settings.ImportBlacklistExtensions ??= new List<string>();
-                settings.EnabledNotificationTriggers ??= new List<string>();
-                settings.Webhooks ??= new List<WebhookConfiguration>();
+                settings.ImportBlacklistExtensions ??= [];
+                settings.EnabledNotificationTriggers ??= [];
+                settings.Webhooks ??= [];
+
+                if (string.IsNullOrEmpty(settings.OutputPath))
+                {
+                    // Fallback to default root folder
+                    var rootFolder = await rootFolderRepository.GetDefaultAsync();
+                    if (rootFolder != null)
+                    {
+                        settings.OutputPath = rootFolder.Path;
+                        logger.LogInformation($"OutputPath not configured, using default root folder: {settings.OutputPath}");
+                    }
+                    else
+                    {
+                        settings.OutputPath = AppContext.BaseDirectory;
+                        logger.LogInformation($"OutputPath not configured, using: {settings.OutputPath}");
+                    }
+                }
 
                 return settings;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
-                _logger.LogError(ex, "Error loading application settings from database (no runtime ALTERs will be attempted)");
+                logger.LogError(exception, "Error loading application settings from database (no runtime ALTERs will be attempted)");
                 return new ApplicationSettings();
             }
         }
@@ -193,7 +191,7 @@ namespace Listenarr.Api.Services
 
                 // Preserve fields from existing settings when the incoming payload omits them.
                 // Must run before normalization so null-checks catch truly absent fields.
-                var existing = await _settingsRepository.GetAsync();
+                var existing = await settingsRepository.GetAsync();
                 if (existing != null)
                 {
                     if (settings.ProwlarrUrl == null)
@@ -227,48 +225,48 @@ namespace Listenarr.Api.Services
                 }
                 catch (JsonException ex)
                 {
-                    _logger.LogWarning(ex, "Failed to normalize notification triggers due to JSON error; saving with original values");
+                    logger.LogWarning(ex, "Failed to normalize notification triggers due to JSON error; saving with original values");
                 }
                 catch (FormatException ex)
                 {
-                    _logger.LogWarning(ex, "Failed to normalize notification triggers due to formatting error; saving with original values");
+                    logger.LogWarning(ex, "Failed to normalize notification triggers due to formatting error; saving with original values");
                 }
 
-                await _settingsRepository.SaveAsync(settings);
+                await settingsRepository.SaveAsync(settings);
 
                 try
                 {
                     if (!string.IsNullOrWhiteSpace(settings.AdminUsername) && !string.IsNullOrWhiteSpace(settings.AdminPassword))
                     {
-                        _logger.LogDebug("Processing admin user credentials: {Username}", settings.AdminUsername);
+                        logger.LogDebug("Processing admin user credentials: {Username}", settings.AdminUsername);
 
-                        var existingUser = await _userService.GetByUsernameAsync(settings.AdminUsername!);
+                        var existingUser = await userService.GetByUsernameAsync(settings.AdminUsername!);
                         if (existingUser == null)
                         {
-                            _logger.LogInformation("Creating new admin user: {Username}", settings.AdminUsername);
-                            await _userService.CreateUserAsync(settings.AdminUsername!, settings.AdminPassword!, null, true);
-                            _logger.LogInformation("Admin user created successfully: {Username}", settings.AdminUsername);
+                            logger.LogInformation("Creating new admin user: {Username}", settings.AdminUsername);
+                            await userService.CreateUserAsync(settings.AdminUsername!, settings.AdminPassword!, null, true);
+                            logger.LogInformation("Admin user created successfully: {Username}", settings.AdminUsername);
                         }
                         else
                         {
-                            _logger.LogInformation("Updating existing admin user password: {Username}", settings.AdminUsername);
-                            await _userService.UpdatePasswordAsync(settings.AdminUsername!, settings.AdminPassword!);
-                            _logger.LogInformation("Admin user password updated successfully: {Username}", settings.AdminUsername);
+                            logger.LogInformation("Updating existing admin user password: {Username}", settings.AdminUsername);
+                            await userService.UpdatePasswordAsync(settings.AdminUsername!, settings.AdminPassword!);
+                            logger.LogInformation("Admin user password updated successfully: {Username}", settings.AdminUsername);
                         }
                     }
                     else
                     {
-                        _logger.LogDebug("No admin credentials provided in settings update");
+                        logger.LogDebug("No admin credentials provided in settings update");
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
                 {
-                    _logger.LogError(ex, "Failed to create or update admin user '{Username}' from application settings. Settings will still be saved.", settings.AdminUsername);
+                    logger.LogError(ex, "Failed to create or update admin user '{Username}' from application settings. Settings will still be saved.", settings.AdminUsername);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error saving application settings to database (no runtime ALTERs will be attempted)");
+                logger.LogError(ex, "Error saving application settings to database (no runtime ALTERs will be attempted)");
                 throw;
             }
         }
@@ -277,7 +275,7 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var settings = await _settingsRepository.GetAsync();
+                var settings = await settingsRepository.GetAsync();
 
                 if (settings == null)
                 {
@@ -305,7 +303,7 @@ namespace Listenarr.Api.Services
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error loading saved Prowlarr import settings");
+                logger.LogError(ex, "Error loading saved Prowlarr import settings");
                 return new ProwlarrImportConnectionSettings();
             }
         }
@@ -314,7 +312,7 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var existing = await _settingsRepository.GetAsync() ?? new ApplicationSettings { Id = 1 };
+                var existing = await settingsRepository.GetAsync() ?? new ApplicationSettings { Id = 1 };
 
                 existing.ProwlarrUrl = string.IsNullOrWhiteSpace(settings.Url) ? string.Empty : settings.Url.Trim();
                 existing.ProwlarrPort = settings.Port;
@@ -323,15 +321,15 @@ namespace Listenarr.Api.Services
                 if (!string.IsNullOrWhiteSpace(settings.ApiKey)
                     && !string.Equals(settings.ApiKey, ApiResponseRedactor.RedactedValue, StringComparison.Ordinal))
                 {
-                    existing.ProwlarrApiKeyEncrypted = _prowlarrImportProtector.Protect(settings.ApiKey.Trim());
+                    existing.ProwlarrApiKeyEncrypted = dataProtector.Protect(settings.ApiKey.Trim());
                 }
 
-                await _settingsRepository.SaveAsync(existing);
+                await settingsRepository.SaveAsync(existing);
                 return await GetProwlarrImportSettingsAsync();
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error saving Prowlarr import settings");
+                logger.LogError(ex, "Error saving Prowlarr import settings");
                 throw;
             }
         }
@@ -345,11 +343,11 @@ namespace Listenarr.Api.Services
 
             try
             {
-                return _prowlarrImportProtector.Unprotect(encryptedApiKey);
+                return dataProtector.Unprotect(encryptedApiKey);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogWarning(ex, "Failed to decrypt saved Prowlarr import API key");
+                logger.LogWarning(ex, "Failed to decrypt saved Prowlarr import API key");
                 return null;
             }
         }
@@ -386,12 +384,12 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                var config = _startupConfigService.GetConfig();
+                var config = startupConfigService.GetConfig();
                 return Task.FromResult(config ?? new StartupConfig());
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error retrieving startup configuration");
+                logger.LogError(ex, "Error retrieving startup configuration");
                 return Task.FromResult(new StartupConfig());
             }
         }
@@ -400,11 +398,11 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                await _startupConfigService.SaveAsync(config);
+                await startupConfigService.SaveAsync(config);
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error saving startup configuration");
+                logger.LogError(ex, "Error saving startup configuration");
                 throw;
             }
         }
@@ -419,7 +417,7 @@ namespace Listenarr.Api.Services
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Error retrieving webhook configurations");
+                logger.LogError(ex, "Error retrieving webhook configurations");
                 return new List<WebhookConfiguration>();
             }
         }

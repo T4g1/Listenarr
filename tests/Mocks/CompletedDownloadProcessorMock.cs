@@ -25,23 +25,14 @@ namespace Listenarr.Tests.Mocks
     {
         private readonly IDownloadRepository? _downloadRepository;
 
-        public TestCompletedDownloadProcessor(IDownloadRepository? downloadRepo)
+        public TestCompletedDownloadProcessor(IDownloadRepository downloadRepo)
         {
             _downloadRepository = downloadRepo;
         }
 
-        public async Task ProcessCompletedDownloadAsync(string downloadId, string finalPath)
+        public async Task ProcessCompletedDownloadAsync(Download download, string finalPath)
         {
-            if (_downloadRepository != null)
-            {
-                var d = await _downloadRepository.FindAsync(downloadId);
-                if (d != null)
-                {
-                    d.Status = DownloadStatus.Completed;
-                    d.FinalPath = finalPath;
-                    await _downloadRepository.UpdateAsync(d);
-                }
-            }
+            await _downloadRepository.UpdateAsync(download.Completed());
         }
     }
 }

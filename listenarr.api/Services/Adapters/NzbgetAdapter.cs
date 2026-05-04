@@ -21,6 +21,8 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using Listenarr.Application.Common;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Services.Adapters
 {

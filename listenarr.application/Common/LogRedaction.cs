@@ -17,20 +17,20 @@
  */
 using System.Text.RegularExpressions;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Application.Common
 {
-    internal static class LogRedaction
+    public static class LogRedaction
     {
         // Default secret environment keys we consider sensitive
-        private static readonly string[] DefaultKeys = new[]
-        {
+        private static readonly string[] DefaultKeys =
+        [
             "LISTENARR_API_KEY",
             "DISCORD_TOKEN",
             "PASSWORD",
             "SECRET",
             "API_KEY",
             "TOKEN"
-        };
+        ];
 
         // Redact occurrences of known secret values in a freeform text block.
         public static string RedactText(string? text, IEnumerable<string?>? secretValues = null)

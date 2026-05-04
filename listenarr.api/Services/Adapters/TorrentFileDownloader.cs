@@ -16,6 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Net;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Services.Adapters
 {

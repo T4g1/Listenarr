@@ -16,17 +16,16 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Reflection;
-using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
-using Listenarr.Api.Services.Metadata;
-using Listenarr.Application.Repositories;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Models.Enumerations;
 using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Models;
+using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -49,95 +48,61 @@ namespace Listenarr.Tests.Features.Api.Services
         [InlineData("nzbget")]
         public async Task FinalizeDownload_QueuesImport_ForAllSupportedClientTypes(string clientType)
         {
-            var download = new Download
-            {
-                Id = $"dl-{clientType}",
-                Title = "Pipeline Coverage",
-                Status = DownloadStatus.Downloading,
-                DownloadClientId = $"client-{clientType}",
-                StartedAt = DateTime.UtcNow
-            };
-            await _downloadRepository.AddAsync(download);
+            var sourceDir = FileService.GetTempDirectory("listenarr-pipeline");
+            var sourceFile = await FileService.GetFileAsync(sourceDir, "Pipeline Coverage.m4b");
 
-            var sourceDir = Path.Join(Path.GetTempPath(), "listenarr-pipeline", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(sourceDir);
-            var sourceFile = Path.Join(sourceDir, "Pipeline Coverage.m4b");
-            await File.WriteAllTextAsync(sourceFile, "dummy");
-
-            var outputDir = Path.Join(Path.GetTempPath(), "listenarr-pipeline-out", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(outputDir);
-
-            var settings = new ApplicationSettings
-            {
-                OutputPath = outputDir,
-                CompletedFileAction = "Move",
-                EnableMetadataProcessing = false,
-                AllowedFileExtensions = new List<string> { ".m4b" }
-            };
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IDownloadRepository>(_downloadRepository);
-
-            var configMock = new Mock<IConfigurationService>();
-            configMock.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(settings);
-            services.AddSingleton(configMock.Object);
-
-            var downloadServiceMock = new Mock<IDownloadService>();
-            services.AddSingleton(downloadServiceMock.Object);
+            var outputDir = FileService.GetTempDirectory("listenarr-pipeline-out");
 
             var queuedSource = string.Empty;
             var queueMock = new Mock<IDownloadProcessingQueueService>();
-            queueMock.Setup(q => q.GetJobsForDownloadAsync(It.IsAny<string>())).ReturnsAsync(new List<DownloadProcessingJob>());
+            queueMock.Setup(q => q.GetJobsForDownloadAsync(It.IsAny<string>())).ReturnsAsync([]);
             queueMock.Setup(q => q.QueueDownloadProcessingAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()))
                 .Callback<string, string, string>((downloadId, sourcePath, clientId) => queuedSource = sourcePath)
                 .ReturnsAsync("job-1");
-            services.AddSingleton(queueMock.Object);
+            _services.AddSingleton(queueMock.Object);
 
-            var importResolverMock = new Mock<IImportItemResolutionService>();
-            importResolverMock
-                .Setup(r => r.ResolveImportItemAsync(It.IsAny<Download>(), It.IsAny<QueueItem>(), It.IsAny<QueueItem>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download dl, QueueItem item, QueueItem _, CancellationToken __) =>
+            var downloadItemServiceMock = new Mock<IDownloadItemService>();
+            downloadItemServiceMock
+                .Setup(r => r.ResolveImportItemAsync(It.IsAny<Download>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Download dl, CancellationToken __) =>
                 {
-                    item.ContentPath = sourceFile;
-                    return item;
+                    return new QueueItem
+                    {
+                        ContentPath = sourceFile
+                    };
                 });
-            services.AddSingleton(importResolverMock.Object);
+            _services.AddSingleton(downloadItemServiceMock.Object);
+            Init();
 
-            services.AddSingleton(new Mock<IFileNamingService>().Object);
-            services.AddSingleton(new Mock<IMetadataService>().Object);
+            var settings = await _applicationSettingsRepository.SaveAsync(new ApplicationSettings
+            {
+                OutputPath = outputDir,
+                CompletedFileAction = FileAction.Move,
+                EnableMetadataProcessing = false,
+                AllowedFileExtensions = [".m4b"]
+            });
 
-            using var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+            var client = await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfiguration
+            {
+                Name = clientType,
+                Type = clientType,
+                DownloadPath = sourceDir
+            });
 
-            var hubContextMock = new Mock<IHubContext<DownloadHub>>();
-            hubContextMock.SetupGet(h => h.Clients).Returns(new Mock<IHubClients>().Object);
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithId($"dl-{clientType}")
+                .WithStatus(DownloadStatus.Downloading)
+                .WithDownloadClientConfiguration(client)
+                .Build());
 
-            var httpFactoryMock = new Mock<IHttpClientFactory>();
-            using var httpClient = new System.Net.Http.HttpClient();
-            httpFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
-
-            var monitor = new DownloadMonitorService(
-                scopeFactory,
-                hubContextMock.Object,
-                new Mock<ILogger<DownloadMonitorService>>().Object,
-                httpFactoryMock.Object);
+            var monitor = MockUtils.CreateDownloadMonitorService(_provider);
 
             var finalizeMethod = typeof(DownloadMonitorService).GetMethod("FinalizeDownloadAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(finalizeMethod);
 
-            var client = new DownloadClientConfiguration
-            {
-                Id = download.DownloadClientId,
-                Name = clientType,
-                Type = clientType,
-                DownloadPath = sourceDir
-            };
-
-            var finalizeTask = (Task?)finalizeMethod!.Invoke(monitor, new object[] { download, sourceDir, client, CancellationToken.None });
-            if (finalizeTask != null)
-            {
-                await finalizeTask;
-            }
+            var finalizeTask = (Task?)finalizeMethod!.Invoke(monitor, [download, sourceDir, client, CancellationToken.None]);
+            Assert.NotNull(finalizeTask);
+            await finalizeTask;
 
             queueMock.Verify(q => q.QueueDownloadProcessingAsync(download.Id, It.IsAny<string>(), client.Id), Times.Once);
             Assert.Equal(Path.GetFullPath(sourceFile), Path.GetFullPath(queuedSource), ignoreCase: true);

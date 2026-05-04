@@ -15,17 +15,18 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-using static Listenarr.Api.Services.FileMover;
+using Listenarr.Application.Models.Enumerations;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Application.Interfaces
 {
+    /// <summary>
+    /// This class responsability is to handle all file manipulation operations
+    /// </summary>
     public interface IFileMover
     {
-        Task<bool> MoveFileAsync(string sourceFile, string destFile);
-        Task<bool> CopyFileAsync(string sourceFile, string destFile);
-        Task<bool> HardlinkFileAsync(string sourceFile, string destFile);
-        Task<bool> MoveDirectoryAsync(string sourceDir, string destDir);
-        Task<bool> CopyDirectoryAsync(string sourceDir, string destDir);
+        Task<bool> MoveDirectoryAsync(string source, string destination);
+
+        Task<bool> CopyDirectoryAsync(string source, string destination);
 
         /// <summary>
         /// Perform the given action on the given file
@@ -33,7 +34,7 @@ namespace Listenarr.Api.Services
         /// <param name="action">What we want to do with the file</param>
         /// <param name="source">File</param>
         /// <param name="destination">Optional destination of the action</param>
-        /// <param name="usedDestinations">List of file name already assigned during a given operation to make sure no collision happens while creating multiple files at the same time</param>
-        Task PerformActionOn(FileAction action, string source, string? destination = null, HashSet<string>? usedDestinations = null);
+        /// <returns>True in case of success, false otherwise</returns>
+        Task<bool> PerformActionOn(FileAction action, string source, string? destination = null);
     }
 }

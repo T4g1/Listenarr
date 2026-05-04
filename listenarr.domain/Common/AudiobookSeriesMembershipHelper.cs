@@ -17,7 +17,7 @@
  */
 using Listenarr.Domain.Models;
 
-namespace Listenarr.Domain.Utils
+namespace Listenarr.Domain.Common
 {
     public static class AudiobookSeriesMembershipHelper
     {

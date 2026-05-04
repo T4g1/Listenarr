@@ -1,7 +1,9 @@
 using System.ComponentModel.DataAnnotations.Schema;
-using Listenarr.Domain.Utils;
+using Listenarr.Application.Models.Enumerations;
+using Listenarr.Domain.Models;
+using Listenarr.Domain.Common;
 
-namespace Listenarr.Domain.Models
+namespace Listenarr.Application.Models.Configurations
 {
     public class ApplicationSettings
     {
@@ -92,8 +94,8 @@ namespace Listenarr.Domain.Models
         public int MissingSourceRetryInitialDelaySeconds { get; set; } = 30;
         public int MissingSourceMaxRetries { get; set; } = 3;
 
-        // Action to take when a download completes: "Move" or "Copy"
-        public string CompletedFileAction { get; set; } = "Move";
+        // Action to take when a download completes
+        public FileAction CompletedFileAction { get; set; } = FileAction.Copy;
 
         // Whether to extract archive files (zip/rar/7z) when discovered in a completed download
         public bool ExtractArchives { get; set; } = true;

@@ -15,6 +15,8 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+using Listenarr.Application.Common;
+
 namespace Listenarr.Api.Services
 {
     public interface IArchiveExtractor
@@ -23,7 +25,7 @@ namespace Listenarr.Api.Services
         /// Extracts an archive to a temporary directory and returns the path of the temp directory, or null on failure.
         /// The caller is responsible for deleting the temporary directory when done.
         /// </summary>
-        Task<string?> ExtractArchiveToTempDirAsync(string archivePath);
+        Task<TempDirectory?> ExtractArchiveToTempDirAsync(string archivePath);
 
         /// <summary>
         /// Returns true when the provided path appears to be a supported archive type.

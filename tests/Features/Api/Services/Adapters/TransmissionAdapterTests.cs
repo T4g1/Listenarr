@@ -18,7 +18,7 @@
 using System.Runtime.InteropServices;
 using Listenarr.Api.Services.Adapters;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Mocks.Api;

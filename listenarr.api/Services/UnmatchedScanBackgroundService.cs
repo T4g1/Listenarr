@@ -17,7 +17,8 @@
  */
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Services
 {

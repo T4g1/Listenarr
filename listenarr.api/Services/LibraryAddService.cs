@@ -17,7 +17,8 @@
  */
 using System.Security.Cryptography;
 using System.Text;
-using Listenarr.Domain.Utils;
+using Listenarr.Application.Interfaces;
+using Listenarr.Domain.Common;
 
 namespace Listenarr.Api.Services
 {

@@ -3,12 +3,12 @@ using Xunit;
 using Moq;
 using Listenarr.Api.Services;
 using System.Reflection;
-using Listenarr.Api.Services.Metadata;
 using System.Runtime.InteropServices;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Mocks;
 using Listenarr.Domain.Models;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -21,8 +21,20 @@ namespace Listenarr.Tests.Features.Api.Services
 
         private Download _download = new DownloadBuilder().Build();
         private DownloadClientConfiguration _client = new DownloadClientConfigurationBuilder().Build();
+        private MetadataServiceMock metadataServiceMock = new();
+        private DownloadClientGatewayMock downloadClientGatewayMock = new();
 
-        private async Task InitData()
+        public override async Task InitializeAsync()
+        {
+            _services.AddSingleton<IMetadataService>(metadataServiceMock);
+
+            _services.AddSingleton<IDownloadClientGateway>(downloadClientGatewayMock);
+
+            Init();
+            await InitDataAsync();
+        }
+
+        private async Task InitDataAsync()
         {
             _client = await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfigurationBuilder()
                 .WithId(CLIENT_CONFIG_ID)
@@ -47,32 +59,21 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Method", "ProcessCompletedDownloadAsync")]
         public async Task ProcessCompletedDownload_CreatesAudiobookFileAndBroadcasts()
         {
-            var metadataMock = new Mock<IMetadataService>();
-            metadataMock.Setup(m => m.ExtractFileMetadataAsync(It.IsAny<string>()))
-                .ReturnsAsync(new AudioMetadata { Title = "Test Book", Artist = "Test Author", Duration = TimeSpan.FromSeconds(3600), Format = "m4b", BitRate = 64000, SampleRate = 44100, Channels = 2 });
-
-            _services.AddSingleton(metadataMock.Object);
-
-            Init();
-            await InitData();
+            metadataServiceMock.AddMetadata(@"dl-test.m4b", new AudioMetadata { Title = "Test Book", Artist = "Test Author", Duration = TimeSpan.FromSeconds(3600), Format = "m4b", BitRate = 64000, SampleRate = 44100, Channels = 2 });
 
             var testPath = await FileService.GetTempFileAsync("dl-test.m4b");
 
-            var audiobook = new AudiobookBuilder()
-                .WithId(1)
-                .WithTitle("Test Book")
-                .Build();
+            var audiobook = await CreateAudiobook();
+            audiobook.BasePath = Path.Join(FileService.GetTempPath(), "destination", "Test Book", "Test Author");
 
-            var download = new DownloadBuilder()
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithId("dl-1")
+                .WithDownloadClientConfiguration(await CreateDownloadClientConfiguration())
                 .WithAudiobook(audiobook)
                 .WithStatus(DownloadStatus.Downloading)
                 .WithPath(testPath)
                 .WithStartDate(DateTime.UtcNow)
-                .Build();
-
-            await _audiobookRepository.AddAsync(audiobook);
-            await _downloadRepository.AddAsync(download);
+                .Build());
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithOutputPath(FileService.GetTempPath())
@@ -86,58 +87,46 @@ namespace Listenarr.Tests.Features.Api.Services
             await downloadService.ProcessCompletedDownloadAsync(download.Id, download.FinalPath);
 
             // Assert: audiobook file created
-            var file = (await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id)).First();
-            if (file != null)
-            {
-                Assert.Contains("Test Author", file.Path);
-                Assert.Contains("Test Book", file.Path);
-                Assert.NotNull(file.DurationSeconds);
-                Assert.InRange(file.DurationSeconds.Value, 3599.0, 3601.0);
-                Assert.Equal("m4b", file.Format);
-            }
-            else
-            {
-                // Import deferred; assert that the final file (or a file in the output path) exists on disk
-                Assert.True(File.Exists(download.FinalPath) || Directory.GetFiles(Path.GetDirectoryName(download.FinalPath) ?? string.Empty, "*", SearchOption.TopDirectoryOnly).Length > 0, "Expected the final file or files on disk when import is deferred");
-            }
-
-            // Broadcast behavior not asserted here; ensure import and registration completed successfully.
+            var files = await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id);
+            Assert.NotEmpty(files);
+            var file = files.First();
+            Assert.NotNull(file);
+            Assert.Contains("Test Author", file.Path);
+            Assert.Contains("Test Book", file.Path);
+            Assert.NotNull(file.DurationSeconds);
+            Assert.InRange(file.DurationSeconds.Value, 3599.0, 3601.0);
+            Assert.Equal("m4b", file.Format);
         }
 
         [Fact]
         [Trait("Method", "ProcessCompletedDownloadAsync")]
         public async Task ProcessCompletedDownload_AudiobookWithBasePath_UsesFilenameOnly_NoExtraFolders()
         {
-            _services.AddSingleton<MetadataServiceMock>();
-            Init();
-            await InitData();
-
             var sourceDirectory = FileService.GetTempDirectory("source");
             var destinationDirectory = FileService.GetTempDirectory("audiobook-base");
 
             var sourceFile = await FileService.GetFileAsync(sourceDirectory, "source-file.m4b");
 
-            var audiobook = new AudiobookBuilder()
+            var audiobook = await _audiobookRepository.AddAsync(new AudiobookBuilder()
                 .WithId(1)
                 .WithTitle("Test Audiobook")
                 .WithAuthor("Test Author")
                 .WithBasePath(destinationDirectory)
-                .Build();
+                .Build());
 
-            var download = new DownloadBuilder()
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithAudiobook(audiobook)
                 .WithStatus(DownloadStatus.Downloading)
                 .WithPath(sourceDirectory)
                 .WithStartDate(DateTime.UtcNow)
-                .Build();
-
-            await _audiobookRepository.AddAsync(audiobook);
-            await _downloadRepository.AddAsync(download);
+                .WithDownloadClientConfiguration(await CreateDownloadClientConfiguration())
+                .Build());
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithMetadataProcessing()
                 .WithMoveFileOnCompleted()
-                .WithFileNamingPattern("{Author}/{Series}/{DiskNumber:00} - {Title}")
+                .WithFileNamingPattern("{DiskNumber:00} - {Title}")
+                .WithMultiFileNamingPattern("{DiskNumber:00} - {Title}")
                 .Build());
 
             // Act
@@ -149,38 +138,22 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.NotNull(updatedDownload);
             Assert.True(updatedDownload.Status == DownloadStatus.Completed || updatedDownload.Status == DownloadStatus.Moved, $"Expected Completed or Moved, got {updatedDownload.Status}");
             Assert.NotNull(updatedDownload.FinalPath);
-            // Either the file was moved into the audiobook BasePath synchronously, or finalization queued/deferred the import and FinalPath may remain the original source path.
-            bool movedIntoBase = updatedDownload.FinalPath.StartsWith(destinationDirectory, StringComparison.OrdinalIgnoreCase);
-            bool stillAtSource = string.Equals(updatedDownload.FinalPath, sourceFile, StringComparison.OrdinalIgnoreCase);
-            Assert.True(movedIntoBase || stillAtSource, $"FinalPath should either be in BasePath or equal source path, got {updatedDownload.FinalPath}");
 
-            if (movedIntoBase)
-            {
-                // Assert: file exists at final path and no extra folders created
-                Assert.True(File.Exists(updatedDownload.FinalPath));
-                var relativePath = Path.GetRelativePath(destinationDirectory, updatedDownload.FinalPath);
-                Assert.DoesNotContain(Path.DirectorySeparatorChar.ToString(), relativePath);
-                Assert.DoesNotContain(Path.AltDirectorySeparatorChar.ToString(), relativePath);
+            var expectedFile = Path.Join(destinationDirectory, "01 - Test Audiobook.m4b");
+            Assert.True(File.Exists(expectedFile));
 
-                var directoriesInBasePath = Directory.GetDirectories(destinationDirectory, "*", SearchOption.AllDirectories);
-                Assert.Empty(directoriesInBasePath);
+            var directoriesInBasePath = Directory.GetDirectories(destinationDirectory, "*", SearchOption.AllDirectories);
+            Assert.Empty(directoriesInBasePath);
 
-                var filesInBasePath = Directory.GetFiles(destinationDirectory, "*", SearchOption.AllDirectories);
-                Assert.Single(filesInBasePath);
-                Assert.Equal(updatedDownload.FinalPath, filesInBasePath[0]);
+            var filesInBasePath = Directory.GetFiles(destinationDirectory, "*", SearchOption.AllDirectories);
+            Assert.Single(filesInBasePath);
 
-                // Assert: source file was moved (not copied)
-                Assert.False(File.Exists(sourceFile));
+            // Assert: source file was moved (not copied)
+            Assert.False(File.Exists(sourceFile));
 
-                // Assert: audiobook file record was created
-                var audiobookFile = Assert.Single(await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id));
-                Assert.Equal(updatedDownload.FinalPath, audiobookFile.Path);
-            }
-            else
-            {
-                // Import may be deferred; ensure source file still exists and job should be queued/handled later.
-                Assert.True(File.Exists(sourceFile));
-            }
+            // Assert: audiobook file record was created
+            var audiobookFile = Assert.Single(await _audiobookFileRepository.GetByAudiobookIdAsync(audiobook.Id));
+            Assert.Equal(expectedFile, audiobookFile.Path);
         }
 
         [Fact]
@@ -270,7 +243,7 @@ namespace Listenarr.Tests.Features.Api.Services
 
         [Fact]
         [Trait("Method", "ProcessMoveOrCopyJobAsync")]
-        public async Task DownloadProcessingBackgroundService_ProcessMoveOrCopy_MultipleFilesAndRemotePathMapping()
+        public async Task DownloadProcessingBackgroundService_ProcessMoveOrCopy_MultipleFiles()
         {
             var remoteSource = FileService.GetTempDirectory("dl-remote-source");
             var localSource = FileService.GetTempDirectory("dl-local-source");
@@ -288,26 +261,14 @@ namespace Listenarr.Tests.Features.Api.Services
             var localChapter4 = await FileService.GetFileAsync(localSource, "04 - Seconde Fondation Isaac Asimov.mp3");
             var localCompanion = await FileService.GetFileAsync(localSource, "Seconde Fondation Isaac Asimov.nfo");
 
-            var importItemResolutionServiceMock = _provider.GetRequiredService<Mock<IImportItemResolutionService>>();
-            importItemResolutionServiceMock
-                .Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == DOWNLOAD_COMPLETE_ID),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
-                {
-                    queueItem.SourceFiles = [
-                        remoteChapter1,
-                        remoteChapter2,
-                        remoteChapter3,
-                        remoteChapter4,
-                        remoteCompanion
-                    ];
-                    return queueItem;
-                });
+            downloadClientGatewayMock.SourceFiles = [
+                localChapter1,
+                localChapter2,
+                localChapter3,
+                localChapter4,
+                localCompanion
+            ];
 
-            await InitData();
             await _remotePathMappingRepository.SaveAsync(new RemotePathMappingBuilder()
                 .WithDownloadClientConfiguration(_client)
                 .WithLocalPath(localSource)
@@ -315,7 +276,6 @@ namespace Listenarr.Tests.Features.Api.Services
                 .Build());
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
-                // FIXME: When removing the output path, the import follows a completely different logic
                 .WithOutputPath(localDestination)
                 .WithoutMetadataProcessing()
                 .WithMoveFileOnCompleted()
@@ -327,7 +287,7 @@ namespace Listenarr.Tests.Features.Api.Services
             var dpbs = _provider.GetRequiredService<DownloadProcessingBackgroundService>();
             var job = await MockUtils.CreateDownloadProcessingJob(_provider, _download, localSource);
             using var scope = _provider.CreateScope();
-            var task = (Task)method!.Invoke(dpbs, [job, scope, CancellationToken.None])!;
+            var task = (Task)method!.Invoke(dpbs, [job, CancellationToken.None])!;
             await task;
 
             Assert.NotNull(method);
@@ -366,26 +326,26 @@ namespace Listenarr.Tests.Features.Api.Services
             var localChapter4 = await FileService.GetFileAsync(localSource, "04 - Seconde Fondation Isaac Asimov.mp3");
             var localCompanion = await FileService.GetFileAsync(localSource, "Seconde Fondation Isaac Asimov.nfo");
 
-            var importItemResolutionServiceMock = _provider.GetRequiredService<Mock<IImportItemResolutionService>>();
-            importItemResolutionServiceMock
+            var downloadItemServiceMock = _provider.GetRequiredService<Mock<IDownloadItemService>>();
+            downloadItemServiceMock
                 .Setup(r => r.ResolveImportItemAsync(
                     It.Is<Download>(d => d.Id == DOWNLOAD_COMPLETE_ID),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
+                .ReturnsAsync((Download download, CancellationToken ct) =>
                 {
-                    queueItem.SourceFiles = [
-                        remoteChapter1,
-                        remoteChapter2,
-                        remoteChapter3,
-                        remoteChapter4,
-                        remoteCompanion
-                    ];
-                    return queueItem;
+                    return new QueueItem
+                    {
+                        SourceFiles = [
+                            remoteChapter1,
+                            remoteChapter2,
+                            remoteChapter3,
+                            remoteChapter4,
+                            remoteCompanion
+                        ]
+                    };
                 });
 
-            await InitData();
+            await InitDataAsync();
             await _remotePathMappingRepository.SaveAsync(new RemotePathMappingBuilder()
                 .WithDownloadClientConfiguration(_client)
                 .WithLocalPath(localSource)

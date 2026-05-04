@@ -18,6 +18,7 @@
 
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Services.Search.Providers;
 

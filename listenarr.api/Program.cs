@@ -32,6 +32,7 @@ using Polly;
 using Polly.Extensions.Http;
 using Listenarr.Api.Extensions;
 using Listenarr.Infrastructure.Extensions;
+using Listenarr.Application.Interfaces;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -448,7 +449,7 @@ builder.Services.AddHttpClient("nzbget")
 // Adapter factory resolution is provided by `IDownloadClientAdapterFactory`.
 
 // Register import item resolution service for V2 path resolution
-builder.Services.AddScoped<IImportItemResolutionService, ImportItemResolutionService>();
+builder.Services.AddScoped<IDownloadItemService, DownloadItemService>();
 
 // Add named HttpClient for direct downloads (DDL)
 builder.Services.AddHttpClient("DirectDownload")
@@ -553,6 +554,9 @@ if (!disableHostedServices)
 {
     builder.Services.AddListenarrHostedServices(builder.Configuration);
 }
+
+// FIXME: Required for ConfigurationService, what was planned with this feature ?
+builder.Services.AddSingleton(new EphemeralDataProtectionProvider().CreateProtector("Listenarr.ConfigurationService.ProwlarrImport"));
 
 // Startup DB normalizer: run once at startup to idempotently normalize legacy JSON columns
 builder.Services.AddHostedService<StartupDbNormalizer>();

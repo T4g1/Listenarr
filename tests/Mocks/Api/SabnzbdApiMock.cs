@@ -1,5 +1,5 @@
 using System.Web;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Tests.Common;
 
 namespace Listenarr.Tests.Mocks.Api
@@ -68,7 +68,8 @@ namespace Listenarr.Tests.Mocks.Api
                     }
                 }
                 """;
-                response = response.Replace("{{REMOTE_PATH}}", REMOTE_PATH);
+                var remote_path = REMOTE_PATH.Replace("\\", "\\\\");
+                response = response.Replace("{{REMOTE_PATH}}", remote_path);
                 return MockUtils.GetCannedResponse(response);
             }
 

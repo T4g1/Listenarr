@@ -159,8 +159,14 @@ namespace Listenarr.Domain.Models
         /// <summary>
         /// Schedule job for retry with exponential backoff
         /// </summary>
-        public void ScheduleRetry()
+        public void ScheduleRetry(string errorMessage = "")
         {
+            if (!string.IsNullOrEmpty(errorMessage))
+            {
+                AddLogEntry(errorMessage);
+                ErrorMessage = errorMessage;
+            }
+
             if (RetryCount >= MaxRetries)
             {
                 MarkAsFailed($"Max retries ({MaxRetries}) exceeded");

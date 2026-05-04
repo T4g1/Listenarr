@@ -31,6 +31,7 @@ using Moq;
 using Listenarr.Api.Services.Search.Providers;
 using Listenarr.Infrastructure.Models;
 using Listenarr.Infrastructure.Repositories;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Services.Search.Providers
 {

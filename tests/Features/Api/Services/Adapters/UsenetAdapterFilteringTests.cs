@@ -19,6 +19,7 @@ using System.Net;
 using System.Text;
 using Listenarr.Api.Services;
 using Listenarr.Api.Services.Adapters;
+using Listenarr.Application.Interfaces;
 using Listenarr.Domain.Models;
 using Listenarr.Tests.Common;
 using Microsoft.Extensions.Logging.Abstractions;

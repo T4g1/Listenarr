@@ -15,11 +15,21 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-namespace Listenarr.Api.Services
+namespace Listenarr.Application.Models.Configurations
 {
-    public interface IFileFinalizer
+    public class FileMoverOptions
     {
-        Task<List<ImportResult>> ImportFilesFromDirectoryAsync(string downloadId, int? audiobookId, IEnumerable<string> files, ApplicationSettings settings);
-        Task<ImportResult> ImportSingleFileAsync(string downloadId, int? audiobookId, string sourcePath, ApplicationSettings settings);
+        // Enable or disable using robocopy as a fallback on Windows
+        public bool EnableRobocopy { get; set; } = true;
+
+        // Timeout for robocopy/process runner calls in milliseconds
+        public int RobocopyTimeoutMs { get; set; } = 60000;
+
+        // Retry configuration for move attempts (number of attempts)
+        public int MaxRetries { get; set; } = 4;
+
+        // Backoff (ms) initial and maximum
+        public int MinBackoffMs { get; set; } = 1000;
+        public int MaxBackoffMs { get; set; } = 8000;
     }
 }

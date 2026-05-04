@@ -1,5 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\listenarr.domain\Listenarr.Domain.csproj" />
     <ProjectReference Include="..\listenarr.application\Listenarr.Application.csproj" />

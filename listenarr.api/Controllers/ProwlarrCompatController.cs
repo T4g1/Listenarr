@@ -19,6 +19,8 @@ using System.Diagnostics;
 using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Controllers
 {
