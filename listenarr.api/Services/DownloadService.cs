@@ -20,7 +20,9 @@ using Microsoft.Extensions.Caching.Memory;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Net;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
+using Listenarr.Application.Common;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Services
 {
@@ -50,7 +52,6 @@ namespace Listenarr.Api.Services
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly IRemotePathMappingService _pathMappingService;
-        private readonly IImportService _importService;
         private readonly ISearchService _searchService;
         private readonly IDownloadClientGateway? _clientGateway;
         private readonly NotificationService _notificationService;
@@ -77,7 +78,6 @@ namespace Listenarr.Api.Services
             IHttpClientFactory httpClientFactory,
             IServiceScopeFactory serviceScopeFactory,
             IRemotePathMappingService pathMappingService,
-            IImportService importService,
             ISearchService searchService,
             IDownloadClientGateway? clientGateway,
             IMemoryCache cache,
@@ -100,7 +100,6 @@ namespace Listenarr.Api.Services
             _httpClient = _httpClientFactory.CreateClient();
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pathMappingService = pathMappingService ?? throw new ArgumentNullException(nameof(pathMappingService));
-            _importService = importService ?? throw new ArgumentNullException(nameof(importService));
             _searchService = searchService ?? throw new ArgumentNullException(nameof(searchService));
             _clientGateway = clientGateway;
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
@@ -222,12 +221,11 @@ namespace Listenarr.Api.Services
                 var download = await _downloadRepository.FindAsync(downloadId);
                 if (download == null)
                 {
-                    _logger.LogWarning("ProcessCompletedDownloadAsync: download record not found: {DownloadId}", downloadId);
+                    throw new InvalidOperationException($"Download {downloadId} does not exists");
                 }
                 else
                 {
-                    download.Status = DownloadStatus.Completed;
-                    await _downloadRepository.UpdateAsync(download);
+                    await _downloadRepository.UpdateAsync(download.Completed());
                     _logger.LogInformation("Marked download {DownloadId} as Completed (pre-import)", downloadId);
                 }
 
@@ -236,7 +234,7 @@ namespace Listenarr.Api.Services
                 try
                 {
                     _logger.LogInformation("Calling CompletedDownloadProcessor for download {DownloadId}", downloadId);
-                    await _completedDownloadProcessor.ProcessCompletedDownloadAsync(downloadId, downloadPath);
+                    await _completedDownloadProcessor.ProcessCompletedDownloadAsync(download, downloadPath);
                     _logger.LogInformation("CompletedDownloadProcessor finished for download {DownloadId}", downloadId);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
@@ -580,7 +578,6 @@ namespace Listenarr.Api.Services
                 Album = searchResult.Album ?? string.Empty,
                 Language = searchResult.Language,
                 OriginalUrl = !string.IsNullOrEmpty(searchResult.MagnetLink) ? searchResult.MagnetLink : (searchResult.TorrentUrl ?? searchResult.NzbUrl ?? string.Empty),
-                Status = DownloadStatus.Queued,
                 Progress = 0,
                 TotalSize = searchResult.Size,
                 DownloadedSize = 0,
@@ -659,8 +656,8 @@ namespace Listenarr.Api.Services
             {
                 using (var scope = _serviceScopeFactory.CreateScope())
                 {
-                    var configService = scope.ServiceProvider.GetService<IConfigurationService>() ?? _configurationService;
-                    var settings = configService != null ? await configService.GetApplicationSettingsAsync() : new ApplicationSettings();
+                    var configService = scope.ServiceProvider.GetRequiredService<IConfigurationService>() ?? _configurationService;
+                    var settings = await configService.GetApplicationSettingsAsync();
 
                     // Fetch audiobook data if available for better notification content
                     object notificationData;
@@ -1840,7 +1837,6 @@ namespace Listenarr.Api.Services
                     Title = searchResult.Title,
                     Language = searchResult.Language,
                     OriginalUrl = searchResult.TorrentUrl ?? searchResult.NzbUrl ?? searchResult.MagnetLink ?? string.Empty,
-                    Status = DownloadStatus.Queued,
                     Progress = 0,
                     TotalSize = searchResult.Size,
                     DownloadedSize = 0,

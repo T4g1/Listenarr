@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 
 namespace Listenarr.Api.Services.Search;
 

@@ -16,25 +16,28 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Text.Json.Serialization;
-using static Listenarr.Api.Services.FileMover;
+using Listenarr.Application.Models.Enumerations;
 
-public class ManualImportRequestDto
+namespace Listenarr.Api.Models.ManualImport
 {
-    [JsonPropertyName("path")]
-    public string Path { get; set; } = string.Empty;
+    public class ManualImportRequestDto
+    {
+        [JsonPropertyName("path")]
+        public string Path { get; set; } = string.Empty;
 
-    [JsonPropertyName("mode")]
-    public string Mode { get; set; } = "interactive";
+        [JsonPropertyName("mode")]
+        public string Mode { get; set; } = "interactive";
 
-    [JsonPropertyName("action")]
-    public FileAction Action { get; set; }
+        [JsonPropertyName("action")]
+        public FileAction Action { get; set; }
 
-    [JsonPropertyName("includeCompanionFiles")]
-    public bool IncludeCompanionFiles { get; set; }
+        [JsonPropertyName("includeCompanionFiles")]
+        public bool IncludeCompanionFiles { get; set; }
 
-    [JsonPropertyName("cleanupEmptySourceFolders")]
-    public bool CleanupEmptySourceFolders { get; set; }
+        [JsonPropertyName("cleanupEmptySourceFolders")]
+        public bool CleanupEmptySourceFolders { get; set; }
 
-    [JsonPropertyName("items")]
-    public List<ManualImportItemDto>? Items { get; set; }
+        [JsonPropertyName("items")]
+        public List<ManualImportItemDto>? Items { get; set; }
+    }
 }

@@ -17,10 +17,18 @@
  */
 using System.Diagnostics;
 using System.Text.Json;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace Listenarr.Api.Services
 {
+    /// <summary>
+    /// Provides download queues from download clients
+    /// Cache results for efficiency
+    /// FIXME: Tries to resolves Download and queue items and does update Download when it succeeds, this should not be done here
+    /// FIXME: Cache management should be done in a dedicated service
+    /// </summary>
     public class DownloadQueueService : IDownloadQueueService
     {
         private readonly IMemoryCache _cache;

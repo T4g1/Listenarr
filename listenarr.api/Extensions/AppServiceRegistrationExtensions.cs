@@ -17,6 +17,8 @@
  */
 // csharp
 using Listenarr.Api.Services.Metadata;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Api.Extensions
 {
@@ -40,7 +42,7 @@ namespace Listenarr.Api.Extensions
 
             services.AddScoped<ISearchService, SearchService>();
             services.AddScoped<IMetadataService, MetadataService>();
-            services.AddScoped<IAudioFileService, AudioFileService>();
+            services.AddScoped<IAudiobookFileService, AudiobookFileService>();
             services.AddScoped<IAuthorCatalogService, AuthorCatalogService>();
             services.AddScoped<ISeriesCatalogService, SeriesCatalogService>();
             services.AddScoped<ILibraryAddService, LibraryAddService>();
@@ -72,7 +74,7 @@ namespace Listenarr.Api.Extensions
             services.AddScoped<IDownloadOrchestrator, DownloadService>();
             // Queue service extracted from DownloadService to encapsulate queue-building and filtering
             services.AddScoped<IDownloadQueueService, DownloadQueueService>();
-            services.AddScoped<IFileProcessingHandler, FileProcessingHandler>();
+            services.AddScoped<IFileProcessingHandler, DownloadProcessingJobHandler>();
             services.AddScoped<IOpenLibraryService, OpenLibraryService>();
             services.AddSingleton<IImageCacheService>(sp => new ImageCacheService(
                 sp.GetRequiredService<ILogger<ImageCacheService>>(),
@@ -82,11 +84,9 @@ namespace Listenarr.Api.Extensions
             services.AddScoped<IFileNamingService, FileNamingService>();
             services.AddScoped<IRenameService, RenameService>();
             // Centralized import service: handles moving/copying, naming and audiobook registration
-            services.AddScoped<IImportService, ImportService>();
+            services.AddScoped<IDownloadImportService, DownloadImportService>();
             // Centralized file mover for robust move/copy with retries and diagnostics
             services.AddScoped<IFileMover, FileMover>();
-            // File finalizer: handles import delegation and final-path sync
-            services.AddScoped<IFileFinalizer, FileFinalizer>();
             // Archive extractor for extracting common archive types (zip/rar/7z)
             services.AddScoped<IArchiveExtractor, ArchiveExtractor>();
             // Completed download processor: handles imports and registration when a download completes

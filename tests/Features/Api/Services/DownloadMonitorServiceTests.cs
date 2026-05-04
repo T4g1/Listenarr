@@ -16,16 +16,16 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Reflection;
-using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
-using Listenarr.Application.Repositories;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Models;
+using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 
@@ -58,36 +58,16 @@ namespace Listenarr.Tests.Features.Api.Services
             configMock.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(new ApplicationSettings());
             configMock.Setup(c => c.GetDownloadClientConfigurationsAsync()).ReturnsAsync(new List<DownloadClientConfiguration>());
             configMock.Setup(c => c.GetDownloadClientConfigurationAsync(It.IsAny<string>())).ReturnsAsync((DownloadClientConfiguration?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IDownloadRepository>(_downloadRepository);
-            services.AddSingleton<IConfigurationService>(configMock.Object);
-            var serviceProvider = services.BuildServiceProvider();
-            var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+            _services.AddSingleton(configMock.Object);
 
             var clientProxyMock = new Mock<IClientProxy>();
             clientProxyMock
                 .Setup(p => p.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
+            _services.AddSingleton(clientProxyMock.Object);
+            Init();
 
-            var hubClientsMock = new Mock<IHubClients>();
-            hubClientsMock.SetupGet(h => h.All).Returns(clientProxyMock.Object);
-
-            var hubContextMock = new Mock<IHubContext<DownloadHub>>();
-            hubContextMock.SetupGet(h => h.Clients).Returns(hubClientsMock.Object);
-
-            var loggerMock = new Mock<ILogger<DownloadMonitorService>>();
-            var httpFactoryMock = new Mock<IHttpClientFactory>();
-            using var httpClient = new HttpClient(new HttpClientHandler());
-            httpFactoryMock
-                .Setup(f => f.CreateClient(It.IsAny<string>()))
-                .Returns(httpClient);
-
-            var monitor = new DownloadMonitorService(
-                scopeFactory,
-                hubContextMock.Object,
-                loggerMock.Object,
-                httpFactoryMock.Object);
+            var monitor = MockUtils.CreateDownloadMonitorService(_provider);
 
             var method = typeof(DownloadMonitorService).GetMethod("MonitorDownloadsAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(method);
@@ -106,17 +86,10 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Scenario", "UnfinalizedCompletedStatesRemainImportCandidates")]
         public async Task MonitorDownloadsAsync_UnfinalizedCompletedStates_RemainActiveImportCandidates(DownloadStatus status)
         {
-            await _downloadRepository.AddAsync(new Download
-            {
-                Id = $"dl-{status.ToString().ToLowerInvariant()}",
-                Title = "Candidate Item",
-                Status = status,
-                DownloadClientId = "client-1",
-                FinalPath = string.Empty,
-                StartedAt = DateTime.UtcNow
-            });
+            var settings = new ApplicationSettingsBuilder()
+                .Build();
 
-            var clientConfig = new DownloadClientConfiguration
+            var client = new DownloadClientConfiguration
             {
                 Id = "client-1",
                 Name = "Enabled Client",
@@ -124,49 +97,39 @@ namespace Listenarr.Tests.Features.Api.Services
                 IsEnabled = true
             };
 
+            var download = new Download
+            {
+                Id = $"dl-{status.ToString().ToLowerInvariant()}",
+                Title = "Candidate Item",
+                Status = status,
+                DownloadClientId = client.Id,
+                StartedAt = DateTime.UtcNow
+            };
+
             var configMock = new Mock<IConfigurationService>();
-            configMock.Setup(c => c.GetApplicationSettingsAsync()).ReturnsAsync(new ApplicationSettings());
+            configMock.Setup(c => c.GetApplicationSettingsAsync())
+                .ReturnsAsync(settings);
             configMock.Setup(c => c.GetDownloadClientConfigurationsAsync())
-                .ReturnsAsync(new List<DownloadClientConfiguration> { clientConfig });
+                .ReturnsAsync([client]);
             configMock.Setup(c => c.GetDownloadClientConfigurationAsync("client-1"))
-                .ReturnsAsync(clientConfig);
+                .ReturnsAsync(client);
+            _services.AddSingleton(configMock.Object);
+            Init();
 
-            var services = new ServiceCollection();
-            services.AddSingleton<IDownloadRepository>(_downloadRepository);
-            services.AddSingleton<IConfigurationService>(configMock.Object);
-            var serviceProvider = services.BuildServiceProvider();
-            var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+            await _applicationSettingsRepository.SaveAsync(settings);
+            await _downloadClientConfigurationRepository.SaveAsync(client);
+            await _downloadRepository.AddAsync(download);
 
-            var clientProxyMock = new Mock<IClientProxy>();
-            clientProxyMock
-                .Setup(p => p.SendCoreAsync(It.IsAny<string>(), It.IsAny<object?[]>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
-
-            var hubClientsMock = new Mock<IHubClients>();
-            hubClientsMock.SetupGet(h => h.All).Returns(clientProxyMock.Object);
-
-            var hubContextMock = new Mock<IHubContext<DownloadHub>>();
-            hubContextMock.SetupGet(h => h.Clients).Returns(hubClientsMock.Object);
-
-            var loggerMock = new Mock<ILogger<DownloadMonitorService>>();
-            var httpFactoryMock = new Mock<IHttpClientFactory>();
-            using var httpClient = new HttpClient(new HttpClientHandler());
-            httpFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
-
-            var monitor = new DownloadMonitorService(
-                scopeFactory,
-                hubContextMock.Object,
-                loggerMock.Object,
-                httpFactoryMock.Object);
+            var monitor = MockUtils.CreateDownloadMonitorService(_provider);
 
             var method = typeof(DownloadMonitorService).GetMethod("MonitorDownloadsAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(method);
 
-            var task = (Task?)method!.Invoke(monitor, new object[] { CancellationToken.None });
+            var task = (Task?)method!.Invoke(monitor, [CancellationToken.None]);
             Assert.NotNull(task);
             await task!;
 
-            configMock.Verify(c => c.GetDownloadClientConfigurationAsync("client-1"), Times.Once);
+            configMock.Verify(c => c.GetDownloadClientConfigurationAsync(client.Id), Times.Once);
         }
     }
 }

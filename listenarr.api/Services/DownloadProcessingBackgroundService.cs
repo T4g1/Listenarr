@@ -15,36 +15,38 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-
-using System.Runtime.InteropServices;
-using Listenarr.Domain.Utils;
-using Listenarr.Api.Services.Metadata;
+using Listenarr.Domain.Common;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Enumerations;
+using Listenarr.Domain.Models.Exceptions;
 
 namespace Listenarr.Api.Services
 {
     /// <summary>
     /// Background service that processes the download post-processing queue
     /// </summary>
-    public class DownloadProcessingBackgroundService : BackgroundService
+    public class DownloadProcessingBackgroundService(
+        ILogger<DownloadProcessingBackgroundService> logger,
+        IAppMetricsService metrics,
+        IDownloadProcessingQueueService downloadProcessingQueueService,
+        IFileMover fileMover,
+        IAudiobookRepository audiobookRepository,
+        IDownloadRepository downloadRepository,
+        IDownloadService downloadService,
+        IMetadataService metadataService,
+        IFileNamingService fileNamingService,
+        IRemotePathMappingService remotePathMappingService,
+        IConfigurationService configurationService,
+        IDownloadProcessingJobRepository downloadProcessingJobRepository,
+        IDownloadItemService downloadItemService,
+        IScanQueueService scanQueueService) : BackgroundService
     {
-        private readonly IServiceScopeFactory _serviceScopeFactory;
-        private readonly ILogger<DownloadProcessingBackgroundService> _logger;
         private readonly TimeSpan _processingInterval = TimeSpan.FromSeconds(10); // Check every 10 seconds
-        private readonly IAppMetricsService _metrics;
-
-        public DownloadProcessingBackgroundService(
-            IServiceScopeFactory serviceScopeFactory,
-            ILogger<DownloadProcessingBackgroundService> logger,
-            IAppMetricsService metrics)
-        {
-            _serviceScopeFactory = serviceScopeFactory;
-            _logger = logger;
-            _metrics = metrics;
-        }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Download Processing Background Service started");
+            logger.LogInformation("Download Processing Background Service started");
 
             // On startup, reset any jobs stuck in Processing status (from previous crash/restart)
             try
@@ -53,15 +55,15 @@ namespace Listenarr.Api.Services
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                _logger.LogInformation("Download processing startup reset canceled during shutdown");
+                logger.LogInformation("Download processing startup reset canceled during shutdown");
             }
             catch (OperationCanceledException ex)
             {
-                _logger.LogWarning(ex, "Download processing startup reset canceled/timed out; continuing");
+                logger.LogWarning(ex, "Download processing startup reset canceled/timed out; continuing");
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Failed to reset stuck jobs on startup");
+                logger.LogError(ex, "Failed to reset stuck jobs on startup");
             }
 
             while (!stoppingToken.IsCancellationRequested)
@@ -80,11 +82,11 @@ namespace Listenarr.Api.Services
                 }
                 catch (OperationCanceledException ex)
                 {
-                    _logger.LogWarning(ex, "Download processing cycle canceled/timed out; continuing");
+                    logger.LogWarning(ex, "Download processing cycle canceled/timed out; continuing");
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
                 {
-                    _logger.LogError(ex, "Error processing download queue");
+                    logger.LogError(ex, "Error processing download queue");
                 }
 
                 try
@@ -97,56 +99,52 @@ namespace Listenarr.Api.Services
                 }
             }
 
-            _logger.LogInformation("Download Processing Background Service stopped");
+            logger.LogInformation("Download Processing Background Service stopped");
         }
 
         // Use FileUtils.GetUniqueDestinationPath instead of a local implementation
 
         private async Task ProcessQueueAsync(CancellationToken cancellationToken)
         {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var queueService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingQueueService>();
-            _ = scope.ServiceProvider.GetRequiredService<IImportItemResolutionService>();
-
-            var job = await queueService.GetNextJobAsync();
+            var job = await downloadProcessingQueueService.GetNextJobAsync();
             if (job == null) return;
 
-            _logger.LogInformation("Processing job {JobId} for download {DownloadId}: {JobType}",
+            logger.LogInformation("Processing job {JobId} for download {DownloadId}: {JobType}",
                 job.Id, job.DownloadId, job.JobType);
 
             // Mark job as processing
             job.Status = ProcessingJobStatus.Processing;
             job.StartedAt = DateTime.UtcNow;
             job.AddLogEntry("Started processing");
-            await queueService.UpdateJobAsync(job);
+            await downloadProcessingQueueService.UpdateJobAsync(job);
 
             try
             {
-                await ProcessJobAsync(job, scope, cancellationToken);
+                await ProcessJobAsync(job, cancellationToken);
 
                 // Only mark the job as completed if it is still in Processing state.
                 // Some job handlers may set the job to Failed/Retry/Skipped and we should respect that.
                 if (job.Status == ProcessingJobStatus.Processing)
                 {
                     job.MarkAsCompleted();
-                    _logger.LogInformation("Successfully completed job {JobId} for download {DownloadId}",
+                    logger.LogInformation("Successfully completed job {JobId} for download {DownloadId}",
                         job.Id, job.DownloadId);
                 }
                 else
                 {
-                    _logger.LogInformation("Job {JobId} for download {DownloadId} finished with status {Status}", job.Id, job.DownloadId, job.Status);
+                    logger.LogInformation("Job {JobId} for download {DownloadId} finished with status {Status}", job.Id, job.DownloadId, job.Status);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {
-                _logger.LogError(ex, "Failed to process job {JobId} for download {DownloadId}: {Error}",
+                logger.LogError(ex, "Failed to process job {JobId} for download {DownloadId}: {Error}",
                     job.Id, job.DownloadId, ex.Message);
 
                 job.AddLogEntry($"Processing failed: {ex.Message}");
                 job.ScheduleRetry();
             }
 
-            await queueService.UpdateJobAsync(job);
+            await downloadProcessingQueueService.UpdateJobAsync(job);
         }
 
         /// <summary>
@@ -155,34 +153,28 @@ namespace Listenarr.Api.Services
         /// </summary>
         private async Task ResetStuckJobsAsync(CancellationToken cancellationToken)
         {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var jobRepository = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobRepository>();
-
-            var stuckJobs = await jobRepository.GetStuckProcessingJobsAsync();
+            var stuckJobs = await downloadProcessingJobRepository.GetStuckProcessingJobsAsync();
 
             if (stuckJobs.Any())
             {
-                _logger.LogInformation("Found {Count} stuck jobs in Processing status, resetting to Pending", stuckJobs.Count);
+                logger.LogInformation("Found {Count} stuck jobs in Processing status, resetting to Pending", stuckJobs.Count);
                 foreach (var job in stuckJobs)
                 {
                     job.Status = ProcessingJobStatus.Pending;
                     job.AddLogEntry("Reset from stuck Processing state after service restart");
-                    _logger.LogInformation("Reset stuck job {JobId} for download {DownloadId}", job.Id, job.DownloadId);
-                    await jobRepository.UpdateAsync(job);
+                    logger.LogInformation("Reset stuck job {JobId} for download {DownloadId}", job.Id, job.DownloadId);
+                    await downloadProcessingJobRepository.UpdateAsync(job);
                 }
             }
         }
 
         private async Task ProcessRetryJobsAsync(CancellationToken cancellationToken)
         {
-            using var scope = _serviceScopeFactory.CreateScope();
-            var queueService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingQueueService>();
-
-            var retryJobs = await queueService.GetRetryJobsAsync();
+            var retryJobs = await downloadProcessingQueueService.GetRetryJobsAsync();
 
             foreach (var job in retryJobs)
             {
-                _logger.LogInformation("Retrying job {JobId} for download {DownloadId} (attempt {Attempt}/{MaxAttempts})",
+                logger.LogInformation("Retrying job {JobId} for download {DownloadId} (attempt {Attempt}/{MaxAttempts})",
                     job.Id, job.DownloadId, job.RetryCount + 1, job.MaxRetries);
 
                 // Reset job to pending for processing
@@ -190,7 +182,7 @@ namespace Listenarr.Api.Services
                 job.ErrorMessage = null;
                 job.AddLogEntry($"Retry #{job.RetryCount} scheduled");
 
-                await queueService.UpdateJobAsync(job);
+                await downloadProcessingQueueService.UpdateJobAsync(job);
             }
         }
 
@@ -202,28 +194,18 @@ namespace Listenarr.Api.Services
         {
             try
             {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var downloadRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-                var jobRepository = scope.ServiceProvider.GetRequiredService<IDownloadProcessingJobRepository>();
-                var queueService = scope.ServiceProvider.GetRequiredService<IDownloadProcessingQueueService>();
-                var pathMapping = scope.ServiceProvider.GetService<IRemotePathMappingService>();
-                var importItemResolution = scope.ServiceProvider.GetRequiredService<IImportItemResolutionService>();
-
                 // Build a set of enabled download client IDs so we skip downloads from disabled clients
-                var configService = scope.ServiceProvider.GetService<IConfigurationService>();
                 HashSet<string> enabledClientIds;
                 try
                 {
-                    var allClients = configService != null
-                        ? await configService.GetDownloadClientConfigurationsAsync()
-                        : new List<DownloadClientConfiguration>();
+                    var allClients = await configurationService.GetDownloadClientConfigurationsAsync();
                     enabledClientIds = new HashSet<string>(
                         allClients.Where(c => c.IsEnabled && !string.IsNullOrWhiteSpace(c.Id)).Select(c => c.Id!),
                         StringComparer.OrdinalIgnoreCase);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+                catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
                 {
-                    _logger.LogDebug(ex, "Failed to load download client configurations for enabled-client filtering");
+                    logger.LogDebug(exception, "Failed to load download client configurations for enabled-client filtering");
                     enabledClientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
 
@@ -241,99 +223,51 @@ namespace Listenarr.Api.Services
                     enabledClientIds.Contains(d.DownloadClientId)).ToList();
                 if (candidates.Count < originalCount)
                 {
-                    _logger.LogDebug("Skipping {Count} completed downloads from disabled/missing download clients",
+                    logger.LogDebug("Skipping {Count} completed downloads from disabled/missing download clients",
                         originalCount - candidates.Count);
                 }
 
                 // Get download IDs that already have active jobs to avoid N+1 queries
                 var candidateIds = candidates.Select(d => d.Id).ToList();
                 var alreadyQueuedIds = new HashSet<string>(
-                    await jobRepository.GetPendingDownloadIdsAsync(candidateIds),
+                    await downloadProcessingJobRepository.GetPendingDownloadIdsAsync(candidateIds),
                     StringComparer.OrdinalIgnoreCase);
 
                 foreach (var dl in candidates)
                 {
-                    try
+                    if (dl.DownloadClientId == null)
                     {
-                        // Skip if there is already a job for this download pending/processing/retry
-                        if (alreadyQueuedIds.Contains(dl.Id))
-                        {
-                            continue;
-                        }
-
-                        // Use V2 pattern: Call GetImportItem to resolve the accurate path
-                        // Build a basic QueueItem from the download data.
-                        // Prefer ClientContentPath (the torrent's content_path, i.e. the actual
-                        // file/folder) over DownloadPath (save_path, i.e. the download directory).
-                        // Using save_path for single-file torrents would resolve to the entire
-                        // downloads directory and import every file in it.
-                        var clientContentPath = dl.Metadata?.TryGetValue("ClientContentPath", out var ccp) is true
-                            ? ccp?.ToString()
-                            : null;
-                        var preliminaryItem = new QueueItem
-                        {
-                            Id = dl.GetClientDownloadItemId() ?? dl.Id,
-                            Title = dl.Title ?? "Unknown",
-                            Status = "completed",
-                            ContentPath = dl.FinalPath is not null ? dl.FinalPath : clientContentPath ?? dl.DownloadPath,
-                            DownloadClientId = dl.DownloadClientId
-                        };
-
-                        // Resolve the import item via the download client adapter
-                        var resolvedItem = await importItemResolution.ResolveImportItemAsync(
-                            dl,
-                            preliminaryItem,
-                            previousAttempt: null,
-                            cancellationToken);
-
-                        var resolvedPath = resolvedItem.ContentPath;
-
-                        // Apply path mapping if needed
-                        if (pathMapping != null && !string.IsNullOrEmpty(dl.DownloadClientId) && !string.IsNullOrEmpty(resolvedPath))
-                        {
-                            try
-                            {
-                                var translated = await pathMapping.TranslatePathAsync(dl.DownloadClientId, resolvedPath);
-                                if (!string.IsNullOrEmpty(translated))
-                                {
-                                    resolvedPath = translated;
-                                }
-                            }
-                            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                            {
-                                _logger.LogDebug(ex, "Path mapping failed for {Path}", resolvedPath);
-                            }
-                        }
-
-                        if (!string.IsNullOrEmpty(resolvedPath) && (File.Exists(resolvedPath) || Directory.Exists(resolvedPath)))
-                        {
-                            // Queue for processing using the resolved path
-                            await queueService.QueueDownloadProcessingAsync(dl.Id, resolvedPath, dl.DownloadClientId);
-                            _logger.LogInformation("Enqueued completed download {DownloadId} for processing: {Source}", dl.Id, resolvedPath);
-                        }
-                        else if (!string.IsNullOrEmpty(resolvedPath))
-                        {
-                            _logger.LogDebug("Resolved path does not exist yet for download {DownloadId}: {Path}", dl.Id, resolvedPath);
-                        }
+                        throw new InvalidOperationException($"Download {dl.Id} had no download client linked to it");
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+
+                    if (string.IsNullOrEmpty(dl.DownloadPath))
                     {
-                        _logger.LogDebug(ex, "Failed to consider completed download {DownloadId} for enqueue", dl.Id);
+                        throw new InvalidOperationException($"Download {dl.Id} path is not set, processing aborted");
                     }
+
+                    // Skip if there is already a job for this download pending/processing/retry
+                    if (alreadyQueuedIds.Contains(dl.Id))
+                    {
+                        continue;
+                    }
+
+                    // Queue for processing using the resolved path
+                    await downloadProcessingQueueService.QueueDownloadProcessingAsync(dl.Id, dl.DownloadPath, dl.DownloadClientId);
+                    logger.LogInformation("Enqueued completed download {DownloadId} for processing: {Source}", dl.Id, dl.DownloadPath);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
-                _logger.LogWarning(ex, "Error while enqueuing completed downloads");
+                logger.LogWarning(exception, "Error while enqueuing completed downloads");
             }
         }
 
-        private async Task ProcessJobAsync(DownloadProcessingJob job, IServiceScope scope, CancellationToken cancellationToken)
+        private async Task ProcessJobAsync(DownloadProcessingJob job, CancellationToken cancellationToken)
         {
             switch (job.JobType)
             {
                 case ProcessingJobType.MoveOrCopyFile:
-                    await ProcessMoveOrCopyJobAsync(job, scope, cancellationToken);
+                    await ProcessMoveOrCopyJobAsync(job, cancellationToken);
                     break;
                 case ProcessingJobType.ExtractMetadata:
                     // Older jobs in the queue may use job types that are no longer supported.
@@ -348,36 +282,27 @@ namespace Listenarr.Api.Services
             }
         }
 
-        private async Task ProcessMoveOrCopyJobAsync(DownloadProcessingJob job, IServiceScope scope, CancellationToken cancellationToken)
+        private async Task ProcessMoveOrCopyJobAsync(DownloadProcessingJob job, CancellationToken cancellationToken)
         {
-            var downloadService = scope.ServiceProvider.GetRequiredService<IDownloadService>();
-            var configService = scope.ServiceProvider.GetRequiredService<IConfigurationService>();
-            var pathMappingService = scope.ServiceProvider.GetService<IRemotePathMappingService>();
-            var fileNamingService = scope.ServiceProvider.GetService<IFileNamingService>();
-            var metadataService = scope.ServiceProvider.GetRequiredService<IMetadataService>();
-            var downloadRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-
             job.AddLogEntry($"Starting file processing: {job.SourcePath}");
+
+            if (job.DownloadClientId == null)
+            {
+                throw new InvalidOperationException($"Job trying to process download {job.DownloadId} unrelated to any download client");
+            }
+
+            if (job.SourcePath == null)
+            {
+                throw new InvalidOperationException($"Job for download {job.DownloadId} has no source path");
+            }
 
             if (string.IsNullOrEmpty(job.SourcePath) || (!File.Exists(job.SourcePath) && !Directory.Exists(job.SourcePath)))
             {
-                // Apply path mapping if needed
-                var localPath = job.SourcePath ?? "";
-                if (pathMappingService != null && !string.IsNullOrEmpty(job.DownloadClientId))
+                var localPath = await remotePathMappingService.TranslatePathAsync(job.DownloadClientId, job.SourcePath);
+                if (!string.Equals(localPath, job.SourcePath, StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        localPath = await pathMappingService.TranslatePathAsync(job.DownloadClientId, job.SourcePath ?? "");
-                        if (!string.Equals(localPath, job.SourcePath, StringComparison.OrdinalIgnoreCase))
-                        {
-                            job.AddLogEntry($"Applied path mapping: {job.SourcePath} -> {localPath}");
-                            job.SourcePath = localPath;
-                        }
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                    {
-                        job.AddLogEntry($"Path mapping failed: {ex.Message}");
-                    }
+                    job.AddLogEntry($"Applied path mapping: {job.SourcePath} -> {localPath}");
+                    job.SourcePath = localPath;
                 }
 
                 if (!File.Exists(localPath) && !Directory.Exists(localPath))
@@ -385,7 +310,7 @@ namespace Listenarr.Api.Services
                     // Source missing at processing-time. Schedule a retry instead of throwing so transient
                     // races (file still being moved by another process) don't permanently fail the job.
                     job.AddLogEntry($"Source path not found at processing time: {localPath}");
-                    _metrics?.Increment("processing.source_missing");
+                    metrics.Increment("processing.source_missing");
                     job.ScheduleRetry();
                     job.ErrorMessage = $"Source path not found at processing time: {localPath}";
                     return;
@@ -393,7 +318,7 @@ namespace Listenarr.Api.Services
             }
 
             // Get application settings
-            var settings = await configService.GetApplicationSettingsAsync();
+            var settings = await configurationService.GetApplicationSettingsAsync();
             job.AddLogEntry($"Retrieved settings - OutputPath: {settings.OutputPath}, EnableMetadataProcessing: {settings.EnableMetadataProcessing}");
 
             // If the source is a directory (multi-file download), enumerate all importable files and process each one
@@ -407,12 +332,12 @@ namespace Listenarr.Api.Services
                 {
                     try
                     {
-                        importableFiles = await MatchLocalAndDownloadedFilesAsync(scope, download, job.SourcePath, settings.ImportBlacklistExtensions, _logger, cancellationToken);
+                        importableFiles = await downloadItemService.MatchLocalAndDownloadedFilesAsync(download, job.SourcePath, cancellationToken);
                     }
                     catch (DownloadProcessingException exception)
                     {
                         // FIXME: Should we really still process unfiltered files in that case ?
-                        _logger.LogWarning(exception, exception.Message);
+                        logger.LogWarning(exception, exception.Message);
 
                         importableFiles = [.. Directory.EnumerateFiles(job.SourcePath, "*.*", SearchOption.AllDirectories)
                                 .Where(f => !FileUtils.IsBlacklistedFile(f, settings.ImportBlacklistExtensions))
@@ -439,10 +364,7 @@ namespace Listenarr.Api.Services
                     job.AddLogEntry($"Processing file: {file}");
                     await ProcessFileWithEnhancedLogicAsync(
                         job,
-                        downloadService,
                         settings,
-                        fileNamingService,
-                        metadataService,
                         cancellationToken,
                         finalizeDownload: false);
 
@@ -491,15 +413,12 @@ namespace Listenarr.Api.Services
             }
 
             // Process the file using the enhanced logic from ProcessCompletedDownloadAsync
-            await ProcessFileWithEnhancedLogicAsync(job, downloadService, settings, fileNamingService, metadataService, cancellationToken);
+            await ProcessFileWithEnhancedLogicAsync(job, settings, cancellationToken);
         }
 
         private async Task ProcessFileWithEnhancedLogicAsync(
             DownloadProcessingJob job,
-            IDownloadService downloadService,
             ApplicationSettings settings,
-            IFileNamingService? fileNamingService,
-            IMetadataService metadataService,
             CancellationToken cancellationToken,
             bool finalizeDownload = true)
         {
@@ -512,21 +431,28 @@ namespace Listenarr.Api.Services
                 job.AddLogEntry($"Processing with output path: {settings.OutputPath}");
 
                 // Determine destination path based on settings
-                if (fileNamingService != null && settings.EnableMetadataProcessing)
+                if (settings.EnableMetadataProcessing)
                 {
                     job.AddLogEntry("Using file naming service for destination path");
 
-                    using var scope = _serviceScopeFactory.CreateScope();
-                    var downloadRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-                    var audiobookRepository = scope.ServiceProvider.GetRequiredService<IAudiobookRepository>();
-                    var download = await downloadRepository.FindAsync(job.DownloadId);
-                    Audiobook? audiobook = null;
-                    if (download != null && download.AudiobookId != null)
+                    var dl = await downloadRepository.FindAsync(job.DownloadId);
+                    if (dl == null)
                     {
-                        audiobook = await audiobookRepository.GetByIdAsync(download.AudiobookId.GetValueOrDefault());
+                        throw new InvalidOperationException($"Cannot process download {job.DownloadId}: Not found");
                     }
 
-                    var metadata = await metadataService.FetchMetadataAsync(job, download, audiobook, cancellationToken);
+                    if (dl.AudiobookId == null)
+                    {
+                        throw new InvalidOperationException($"Cannot process download {job.DownloadId}: Does not have an audiobook linked to it");
+                    }
+
+                    var audiobook = await audiobookRepository.GetByIdAsync((int)dl.AudiobookId);
+                    if (audiobook == null)
+                    {
+                        throw new InvalidOperationException($"Cannot process download {job.DownloadId}: Cannot retrieve audiobook {dl.AudiobookId}");
+                    }
+
+                    var metadata = await metadataService.FetchMetadataAsync(job, dl, audiobook, cancellationToken);
 
                     // For processing jobs, compute the appropriate destination directory first.
                     // If the download is linked to an audiobook and the audiobook has a BasePath,
@@ -562,7 +488,7 @@ namespace Listenarr.Api.Services
                     // subfolders (e.g. {Author}/{Series}/...). If the generatedPath is rooted, use it
                     // directly. If it's relative, combine it with the configured OutputPath so subfolders
                     // are retained instead of being stripped to a single filename.
-                    _logger.LogDebug("GeneratedPath from FileNamingService: {GeneratedPath} (rooted={IsRooted})", generatedPath, Path.IsPathRooted(generatedPath));
+                    logger.LogDebug("GeneratedPath from FileNamingService: {GeneratedPath} (rooted={IsRooted})", generatedPath, Path.IsPathRooted(generatedPath));
 
                     // Only allow subfolders if the naming pattern includes DiskNumber or ChapterNumber
                     var fullPattern = settings.FileNamingPattern ?? string.Empty;
@@ -638,9 +564,9 @@ namespace Listenarr.Api.Services
                             job.AddLogEntry($"Warning: destination dir is a root path: {destDirForCheck}");
                         }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+                    catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
                     {
-                        job.AddLogEntry($"Failed to inspect destination directory: {ex.Message}");
+                        job.AddLogEntry($"Failed to inspect destination directory: {exception.Message}");
                     }
                 }
                 else
@@ -654,328 +580,81 @@ namespace Listenarr.Api.Services
                 // Determine destination directory but DO NOT create it during import/processing
                 var destDir = Path.GetDirectoryName(destinationPath);
 
-                // Only perform file operations if the destination directory already exists.
-                if (!string.IsNullOrEmpty(destDir) && Directory.Exists(destDir))
+                // Check if already moved (use download loaded from dbContext above)
+                var download = await downloadRepository.FindAsync(job.DownloadId);
+                if (download != null && download.Status == DownloadStatus.Moved)
                 {
-                    // Check if already moved (use download loaded from dbContext above)
-                    using var scope = _serviceScopeFactory.CreateScope();
-                    var scopedDlRepository = scope.ServiceProvider.GetRequiredService<IDownloadRepository>();
-                    var download = await scopedDlRepository.FindAsync(job.DownloadId);
-                    if (download != null && download.Status == DownloadStatus.Moved)
+                    job.AddLogEntry("File already moved by DownloadService. Skipping background move.");
+                    job.DestinationPath = destinationPath;
+                    return;
+                }
+
+                if (!string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(destinationPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    // Sonarr parity: ImportMode.Auto - if CanMoveFiles is true, Move; otherwise Copy.
+                    // This prevents moving files from active seeders (which breaks the torrent).
+                    // Falls back to configured CompletedFileAction if CanMoveFiles metadata is not present.
+                    var action = settings.CompletedFileAction;
+
+                    if (download?.Metadata != null && download.Metadata.TryGetValue("CanMoveFiles", out var canMoveObj))
                     {
-                        job.AddLogEntry("File already moved by DownloadService. Skipping background move.");
-                        job.DestinationPath = destinationPath;
-                        return;
+                        bool canMoveFiles = canMoveObj is bool b ? b : (canMoveObj is System.Text.Json.JsonElement je ? je.GetBoolean() : bool.TryParse(canMoveObj?.ToString(), out var parsed) && parsed);
+                        if (!canMoveFiles && action == FileAction.Move)
+                        {
+                            action = FileAction.Copy;
+                            job.AddLogEntry("Torrent is still seeding (CanMoveFiles=false). Using Copy instead of Move to preserve seeder.");
+                            logger.LogInformation("Download {DownloadId}: CanMoveFiles=false, downgrading Move to Copy to preserve active seeder", job.DownloadId);
+                        }
                     }
-                    if (!string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(destinationPath), StringComparison.OrdinalIgnoreCase))
+
+                    job.AddLogEntry($"Performing {action} operation");
+
+                    // Capture source size before operation for later verification (move will remove source)
+                    long sourceSize = new FileInfo(sourcePath).Length;
+
+                    try
                     {
-                        // Sonarr parity: ImportMode.Auto - if CanMoveFiles is true, Move; otherwise Copy.
-                        // This prevents moving files from active seeders (which breaks the torrent).
-                        // Falls back to configured CompletedFileAction if CanMoveFiles metadata is not present.
-                        var configuredAction = settings.CompletedFileAction ?? "Move";
-                        var action = configuredAction;
+                        // Ensure unique destination to avoid overwriting
+                        logger.LogDebug("Resolving unique destination for background job: {Dest}", destinationPath);
+                        destinationPath = FileUtils.GetUniqueDestinationPath(destinationPath);
+                        var success = await fileMover.PerformActionOn(action, sourcePath, destinationPath);
 
-                        if (download?.Metadata != null && download.Metadata.TryGetValue("CanMoveFiles", out var canMoveObj))
+                        // Verification: ensure destination exists and (if sourceSize available) sizes match
+                        if (!File.Exists(destinationPath))
                         {
-                            bool canMoveFiles = canMoveObj is bool b ? b : (canMoveObj is System.Text.Json.JsonElement je ? je.GetBoolean() : bool.TryParse(canMoveObj?.ToString(), out var parsed) && parsed);
-                            if (!canMoveFiles && string.Equals(configuredAction, "Move", StringComparison.OrdinalIgnoreCase))
-                            {
-                                action = "Copy";
-                                job.AddLogEntry("Torrent is still seeding (CanMoveFiles=false). Using Copy instead of Move to preserve seeder.");
-                                _logger.LogInformation("Download {DownloadId}: CanMoveFiles=false, downgrading Move to Copy to preserve active seeder", job.DownloadId);
-                            }
-                        }
-
-                        job.AddLogEntry($"Performing {action} operation");
-
-                        // Capture source size before operation for later verification (move will remove source)
-                        long? sourceSize = null;
-                        try
-                        {
-                            if (File.Exists(sourcePath))
-                            {
-                                sourceSize = new FileInfo(sourcePath).Length;
-                            }
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                        {
-                            job.AddLogEntry($"Failed to read source file size: {ex.Message}");
+                            job.AddLogEntry($"Destination not found after {action}: {destinationPath}");
+                            job.ErrorMessage = $"Destination not found after {action}";
+                            throw new IOException($"Destination not found after {action}: {destinationPath}");
                         }
 
                         try
                         {
-                            // Ensure unique destination to avoid overwriting
-                            _logger.LogDebug("Resolving unique destination for background job: {Dest}", destinationPath);
-                            var uniqueDest = FileUtils.GetUniqueDestinationPath(destinationPath);
-                            var fileMover = scope.ServiceProvider.GetService<IFileMover>();
-                            if (string.Equals(action, "Copy", StringComparison.OrdinalIgnoreCase))
+                            var destSize = new FileInfo(destinationPath).Length;
+                            if (destSize != sourceSize)
                             {
-                                try
-                                {
-                                    if (fileMover != null)
-                                    {
-                                        var ok = await fileMover.CopyFileAsync(sourcePath, uniqueDest);
-                                        if (ok) job.AddLogEntry($"Copied file: {sourcePath} -> {uniqueDest}");
-                                        else throw new IOException("CopyFileAsync failed");
-                                    }
-                                    else
-                                    {
-                                        File.Copy(sourcePath, uniqueDest, true);
-                                        job.AddLogEntry($"Copied file: {sourcePath} -> {uniqueDest}");
-                                    }
-                                }
-                                catch (FileNotFoundException fnf)
-                                {
-                                    job.AddLogEntry($"Copy failed - source not found: {fnf.Message}");
-                                    _metrics?.Increment("processing.copy_source_not_found");
-                                    job.ScheduleRetry();
-                                    job.ErrorMessage = fnf.Message;
-                                    return;
-                                }
-                                catch (UnauthorizedAccessException uae)
-                                {
-                                    job.AddLogEntry($"Copy failed - unauthorized access: {uae.Message}");
-                                    try
-                                    {
-                                        var diagDestDir = Path.GetDirectoryName(uniqueDest) ?? string.Empty;
-                                        job.AddLogEntry($"Copy destination dir exists={Directory.Exists(diagDestDir)} PathRoot={(string.IsNullOrEmpty(diagDestDir) ? "(n/a)" : Path.GetPathRoot(diagDestDir) ?? "(no-root)")}");
-                                    }
-                                    catch (Exception caughtEx_5) when (caughtEx_5 is not OperationCanceledException && caughtEx_5 is not OutOfMemoryException && caughtEx_5 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    try { _metrics?.Increment("processing.move_unauthorized"); }
-                                    catch (Exception caughtEx_6) when (caughtEx_6 is not OperationCanceledException && caughtEx_6 is not OutOfMemoryException && caughtEx_6 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    try
-                                    {
-                                        job.AddLogEntry($"Process identity: {Environment.UserDomainName}\\{Environment.UserName}");
-                                    }
-                                    catch (Exception caughtEx_7) when (caughtEx_7 is not OperationCanceledException && caughtEx_7 is not OutOfMemoryException && caughtEx_7 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    job.ErrorMessage = uae.Message;
-                                    job.ScheduleRetry();
-                                    return;
-                                }
-                                catch (IOException ioex)
-                                {
-                                    var msg = ioex.Message ?? string.Empty;
-                                    if (msg.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 || ioex.HResult == unchecked((int)0x80070020))
-                                    {
-                                        job.AddLogEntry($"Copy failed due to sharing violation (file locked): {ioex.Message}");
-                                        try { _metrics?.Increment("processing.move_file_locked"); }
-                                        catch (Exception caughtEx_8) when (caughtEx_8 is not OperationCanceledException && caughtEx_8 is not OutOfMemoryException && caughtEx_8 is not StackOverflowException)
-                                        {
-                                            System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                        }
-                                        job.ErrorMessage = ioex.Message;
-                                        job.ScheduleRetry();
-                                        return;
-                                    }
-                                    throw;
-                                }
+                                job.MarkAsFailed($"Destination size ({destSize}) does not match source size ({sourceSize})");
+                                throw new IOException("Destination size mismatch after file operation");
                             }
-                            else if (string.Equals(action, "Hardlink/Copy", StringComparison.OrdinalIgnoreCase))
-                            {
-                                try
-                                {
-                                    if (fileMover != null)
-                                    {
-                                        var ok = await fileMover.HardlinkFileAsync(sourcePath, uniqueDest);
-                                        if (ok) job.AddLogEntry($"Hardlinked file: {sourcePath} -> {uniqueDest}");
-                                        else throw new IOException("HardlinkFileAsync failed");
-                                    }
-                                    else
-                                    {
-                                        // Fallback without IFileMover
-                                        try
-                                        {
-                                            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                                            {
-                                                if (!NativeFileMethods.CreateHardLinkWindows(uniqueDest, sourcePath))
-                                                    throw new IOException("Hardlink failed");
-                                            }
-                                            else
-                                            {
-                                                if (NativeFileMethods.CreateHardLinkUnix(sourcePath, uniqueDest) != 0)
-                                                    throw new IOException("Hardlink failed");
-                                            }
-                                            job.AddLogEntry($"Hardlinked file: {sourcePath} -> {uniqueDest}");
-                                        }
-                                        catch (Exception caughtEx_9) when (caughtEx_9 is not OperationCanceledException && caughtEx_9 is not OutOfMemoryException && caughtEx_9 is not StackOverflowException)
-                                        {
-                                            File.Copy(sourcePath, uniqueDest, true);
-                                            job.AddLogEntry($"Hardlink failed, copied file: {sourcePath} -> {uniqueDest}");
-                                        }
-                                    }
-                                }
-                                catch (FileNotFoundException fnf)
-                                {
-                                    job.AddLogEntry($"Hardlink failed - source not found: {fnf.Message}");
-                                    _metrics?.Increment("processing.copy_source_not_found");
-                                    job.ScheduleRetry();
-                                    job.ErrorMessage = fnf.Message;
-                                    return;
-                                }
-                                catch (UnauthorizedAccessException uae)
-                                {
-                                    job.AddLogEntry($"Hardlink failed - unauthorized access: {uae.Message}");
-                                    job.ErrorMessage = uae.Message;
-                                    job.ScheduleRetry();
-                                    return;
-                                }
-                                catch (IOException ioex)
-                                {
-                                    var msg = ioex.Message ?? string.Empty;
-                                    if (msg.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 || ioex.HResult == unchecked((int)0x80070020))
-                                    {
-                                        job.AddLogEntry($"Hardlink failed due to sharing violation (file locked): {ioex.Message}");
-                                        try { _metrics?.Increment("processing.move_file_locked"); }
-                                        catch (Exception caughtEx_10) when (caughtEx_10 is not OperationCanceledException && caughtEx_10 is not OutOfMemoryException && caughtEx_10 is not StackOverflowException)
-                                        {
-                                            System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                        }
-                                        job.ErrorMessage = ioex.Message;
-                                        job.ScheduleRetry();
-                                        return;
-                                    }
-                                    throw;
-                                }
-                            }
-                            else
-                            {
-                                // Default to Move
-                                try
-                                {
-                                    if (fileMover != null)
-                                    {
-                                        var ok = await fileMover.MoveFileAsync(sourcePath, uniqueDest);
-                                        if (ok) job.AddLogEntry($"Moved file: {sourcePath} -> {uniqueDest}");
-                                        else throw new IOException("MoveFileAsync failed");
-                                    }
-                                    else
-                                    {
-                                        File.Move(sourcePath, uniqueDest, true);
-                                        job.AddLogEntry($"Moved file: {sourcePath} -> {uniqueDest}");
-                                    }
-                                }
-                                catch (FileNotFoundException fnf)
-                                {
-                                    // File disappeared between the earlier checks and the move. Treat as transient and retry.
-                                    job.AddLogEntry($"Move failed - source not found: {fnf.Message}");
-                                    _metrics?.Increment("processing.move_source_not_found");
-                                    job.ScheduleRetry();
-                                    job.ErrorMessage = fnf.Message;
-                                    return;
-                                }
-                                catch (UnauthorizedAccessException uae)
-                                {
-                                    job.AddLogEntry($"Move failed - unauthorized access: {uae.Message}");
-                                    try
-                                    {
-                                        var diagDestDir = Path.GetDirectoryName(uniqueDest) ?? string.Empty;
-                                        job.AddLogEntry($"Move destination dir exists={Directory.Exists(diagDestDir)} PathRoot={(string.IsNullOrEmpty(diagDestDir) ? "(n/a)" : Path.GetPathRoot(diagDestDir) ?? "(no-root)")}");
-                                    }
-                                    catch (Exception caughtEx_11) when (caughtEx_11 is not OperationCanceledException && caughtEx_11 is not OutOfMemoryException && caughtEx_11 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    try { _metrics?.Increment("processing.move_unauthorized"); }
-                                    catch (Exception caughtEx_12) when (caughtEx_12 is not OperationCanceledException && caughtEx_12 is not OutOfMemoryException && caughtEx_12 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    try
-                                    {
-                                        job.AddLogEntry($"Process identity: {Environment.UserDomainName}\\{Environment.UserName}");
-                                    }
-                                    catch (Exception caughtEx_13) when (caughtEx_13 is not OperationCanceledException && caughtEx_13 is not OutOfMemoryException && caughtEx_13 is not StackOverflowException)
-                                    {
-                                        System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                    }
-                                    job.ErrorMessage = uae.Message;
-                                    job.ScheduleRetry();
-                                    return;
-                                }
-                                catch (IOException ioex)
-                                {
-                                    var msg = ioex.Message ?? string.Empty;
-                                    if (msg.IndexOf("being used by another process", StringComparison.OrdinalIgnoreCase) >= 0 || ioex.HResult == unchecked((int)0x80070020))
-                                    {
-                                        job.AddLogEntry($"Move failed due to sharing violation (file locked): {ioex.Message}");
-                                        try { _metrics?.Increment("processing.move_file_locked"); }
-                                        catch (Exception caughtEx_14) when (caughtEx_14 is not OperationCanceledException && caughtEx_14 is not OutOfMemoryException && caughtEx_14 is not StackOverflowException)
-                                        {
-                                            System.Diagnostics.Debug.WriteLine("Suppressed non-fatal exception in catch block.");
-                                        }
-                                        job.ErrorMessage = ioex.Message;
-                                        job.ScheduleRetry();
-                                        return;
-                                    }
-                                    throw;
-                                }
-                            }
-
-
-                            destinationPath = uniqueDest;
-
-                            // Verification: ensure destination exists and (if sourceSize available) sizes match
-                            if (!File.Exists(destinationPath))
-                            {
-                                job.AddLogEntry($"Destination not found after {action}: {destinationPath}");
-                                job.ErrorMessage = $"Destination not found after {action}";
-                                throw new IOException($"Destination not found after {action}: {destinationPath}");
-                            }
-
-                            if (sourceSize.HasValue)
-                            {
-                                try
-                                {
-                                    var destSize = new FileInfo(destinationPath).Length;
-                                    if (destSize != sourceSize.Value)
-                                    {
-                                        job.AddLogEntry($"Destination size ({destSize}) does not match source size ({sourceSize.Value})");
-                                        job.ErrorMessage = $"Destination size mismatch: {destSize} != {sourceSize.Value}";
-                                        throw new IOException("Destination size mismatch after file operation");
-                                    }
-                                }
-                                catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-                                {
-                                    // If verifying size fails for any reason, record and surface the error
-                                    job.AddLogEntry($"Failed to verify destination size: {ex.Message}");
-                                    job.ErrorMessage = ex.Message;
-                                    throw;
-                                }
-                            }
-
-                            job.AddLogEntry($"Verified destination: {destinationPath} (size: {new FileInfo(destinationPath).Length})");
-                            job.DestinationPath = destinationPath;
                         }
-                        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+                        catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
                         {
-                            // Ensure the error is recorded on the job so it surfaces in the queue stats/logs
-                            job.AddLogEntry($"File operation failed: {ex.Message}");
-                            job.ErrorMessage = ex.Message;
+                            // If verifying size fails for any reason, record and surface the error
+                            job.MarkAsFailed($"Failed to verify destination size: {exception.Message}");
                             throw;
                         }
+
+                        job.AddLogEntry($"Verified destination: {destinationPath} (size: {new FileInfo(destinationPath).Length})");
+                        job.DestinationPath = destinationPath;
                     }
-                    else
+                    catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
                     {
-                        job.AddLogEntry("Source and destination are the same, no file operation needed");
-                        job.DestinationPath = sourcePath;
+                        job.MarkAsFailed($"File operation failed: {exception.Message}");
+                        throw;
                     }
                 }
                 else
                 {
-                    // Do not create directories during processing/import. If destination directory doesn't exist,
-                    // leave the file in place and log a warning.
-                    job.AddLogEntry($"Destination directory does not exist: {destDir}. Skipping file move/copy and keeping source: {sourcePath}");
-                    job.ErrorMessage = $"Destination directory does not exist: {destDir}";
-                    _metrics?.Increment("processing.dest_dir_missing");
+                    job.AddLogEntry("Source and destination are the same, no file operation needed");
                     job.DestinationPath = sourcePath;
                 }
             }
@@ -991,98 +670,6 @@ namespace Listenarr.Api.Services
             }
         }
 
-        /// <summary>
-        /// List files in the given folder and check which ones belongs to the given download
-        /// </summary>
-        /// <param name="scope">Scope provider to query required services</param>
-        /// <param name="download">Download to which we want to match files</param>
-        /// <param name="localPath">Local Listenarr path where files are located</param>
-        /// <param name="blacklistedExtensions">List of file extension that can never be matched</param>
-        /// <param name="cancellationToken"></param>
-        /// <param name="logger"></param>
-        /// <returns>List of files that are in the given local directory and also part of the given download</returns>
-        /// <exception cref="DownloadProcessingException">Thrown when we are technicaly unable to perform the filtering based on download client retrieved informations</exception>
-        public static async Task<List<string>> MatchLocalAndDownloadedFilesAsync(
-            IServiceScope scope,
-            Download download,
-            string localPath,
-            List<string> blacklistedExtensions,
-            ILogger logger,
-            CancellationToken cancellationToken = default)
-        {
-            var importableFiles = Directory.EnumerateFiles(localPath, "*.*", SearchOption.AllDirectories)
-                .Where(f => !FileUtils.IsBlacklistedFile(f, blacklistedExtensions))
-                .Select(f => FileUtils.NormalizeStoredPath(f))
-                .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            try
-            {
-                var importResolver = scope.ServiceProvider.GetRequiredService<IImportItemResolutionService>();
-                var remotePathMappingService = scope.ServiceProvider.GetRequiredService<IRemotePathMappingService>();
-
-                var clientContentPath = download.Metadata?.TryGetValue("ClientContentPath", out var ccp) is true
-                    ? ccp?.ToString()
-                    : null;
-                var preliminaryItem = new QueueItem
-                {
-                    Id = download.GetClientDownloadItemId() ?? download.Id,
-                    Title = download.Title ?? "Unknown",
-                    Status = "completed",
-                    ContentPath = clientContentPath ?? (download.FinalPath is not null ? download.FinalPath : download.DownloadPath),
-                    DownloadClientId = download.DownloadClientId
-                };
-
-                var downloadClientItem = await importResolver.ResolveImportItemAsync(
-                    download,
-                    preliminaryItem,
-                    previousAttempt: null,
-                    cancellationToken);
-
-                if (downloadClientItem == null || downloadClientItem.SourceFiles == null || downloadClientItem.SourceFiles.Count == 0)
-                {
-                    throw new DownloadProcessingException($"Unable to get the client item matching download or no files reported by the download client for download {download.Id}");
-                }
-
-                var allowedFiles = new HashSet<string>(
-                    downloadClientItem.SourceFiles
-                        .Where(path => !string.IsNullOrWhiteSpace(path))
-                        .Select(path => FileUtils.NormalizeStoredPath(path)),
-                    StringComparer.OrdinalIgnoreCase);
-
-                // Apply remote path mapping
-                var translationTasks = allowedFiles
-                    .Select(path => remotePathMappingService.TranslatePathAsync(download.DownloadClientId, path));
-
-                var tranlatedAllowedFiles = await Task.WhenAll(translationTasks);
-
-                var filteredFiles = importableFiles
-                    .Where(tranlatedAllowedFiles.Contains)
-                    .ToList();
-
-                if (filteredFiles.Count == 0)
-                {
-                    logger.LogWarning(
-                        "Download client reported {ClientFileCount} related file(s) for download {DownloadId}, but none matched the local import candidates under {SourcePath}",
-                        allowedFiles.Count,
-                        download.Id,
-                        localPath);
-                }
-                else
-                {
-                    logger.LogInformation(
-                        "Scoped directory import for download {DownloadId} from {OriginalCount} to {FilteredCount} file(s) using the download client's reported file list",
-                        download.Id,
-                        importableFiles.Count,
-                        filteredFiles.Count);
-                }
-                return filteredFiles;
-            }
-            catch (Exception ex) when (ex is not (DownloadProcessingException or OperationCanceledException or OutOfMemoryException or StackOverflowException))
-            {
-                throw new DownloadProcessingException($"Unknown error while matching download client files to local files for import for download {download.Id}", ex);
-            }
-        }
-
         private async Task FinalizeProcessedDownloadAsync(DownloadProcessingJob job, IDownloadService downloadService)
         {
             if (job.SourcePath == null)
@@ -1095,23 +682,13 @@ namespace Listenarr.Api.Services
 
             try
             {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var finalizeDlRepository = scope.ServiceProvider.GetService<IDownloadRepository>();
-                var finalizeAudiobookRepository = scope.ServiceProvider.GetService<IAudiobookRepository>();
-                var scanQueue = scope.ServiceProvider.GetService<IScanQueueService>();
-
-                if (scanQueue == null || finalizeDlRepository == null || finalizeAudiobookRepository == null)
-                {
-                    return;
-                }
-
-                var dl = await finalizeDlRepository.FindAsync(job.DownloadId);
+                var dl = await downloadRepository.FindAsync(job.DownloadId);
                 if (dl == null || dl.AudiobookId == null)
                 {
                     return;
                 }
 
-                var audiobook = await finalizeAudiobookRepository.GetByIdAsync(dl.AudiobookId.Value);
+                var audiobook = await audiobookRepository.GetByIdAsync(dl.AudiobookId.Value);
                 if (audiobook == null)
                 {
                     return;
@@ -1123,13 +700,13 @@ namespace Listenarr.Api.Services
                 // verify the library location and not the download directory, which would
                 // trigger spurious "Refusing to associate file outside audiobook folder"
                 // warnings from AudioFileService.
-                var jobId = await scanQueue.EnqueueScanAsync(audiobook, null);
+                var jobId = await scanQueueService.EnqueueScanAsync(audiobook, null);
                 job.AddLogEntry($"Enqueued scan job {jobId} for audiobook {dl.AudiobookId}");
-                _logger.LogInformation("Enqueued scan job {JobId} for audiobook {AudiobookId} after processing download {DownloadId}", jobId, dl.AudiobookId, job.DownloadId);
+                logger.LogInformation("Enqueued scan job {JobId} for audiobook {AudiobookId} after processing download {DownloadId}", jobId, dl.AudiobookId, job.DownloadId);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
+            catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
-                job.AddLogEntry($"Failed to enqueue scan job: {ex.Message}");
+                job.AddLogEntry($"Failed to enqueue scan job: {exception.Message}");
             }
         }
     }

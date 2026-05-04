@@ -24,7 +24,7 @@ using Listenarr.Infrastructure.Models;
 using Listenarr.Infrastructure.Repositories;
 using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 
 namespace Listenarr.Tests.Features.Api.Services
 {

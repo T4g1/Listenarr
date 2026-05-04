@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Listenarr.Domain.Models;
 using System.Text.Json;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Infrastructure.Models.Configurations
 {

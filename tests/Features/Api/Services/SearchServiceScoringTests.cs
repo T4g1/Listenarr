@@ -27,6 +27,7 @@ using Microsoft.AspNetCore.SignalR;
 using Moq;
 using Xunit;
 using Listenarr.Api.Services.Search.Providers;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Services
 {

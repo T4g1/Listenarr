@@ -19,13 +19,14 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using Listenarr.Api.Services.Adapters;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Tests.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using Listenarr.Application.Interfaces;
+using Listenarr.Api.Services.Adapters;
 
 namespace Listenarr.Tests.Features.Api.Services.Adapters
 {
@@ -75,7 +76,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
 
             using var http = new HttpClient(handler);
             var factory = new TestHttpClientFactory(http);
-            var pathMapMock = new Mock<Listenarr.Api.Services.IRemotePathMappingService>();
+            var pathMapMock = new Mock<IRemotePathMappingService>();
             var adapter = new QbittorrentAdapter(factory, pathMapMock.Object, Mock.Of<ITorrentFileDownloader>(), NullLogger<QbittorrentAdapter>.Instance);
 
             var cfg = new DownloadClientConfiguration
@@ -113,7 +114,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
 
             using var http = new HttpClient(handler);
             var factory = new TestHttpClientFactory(http);
-            var pathMapMock = new Mock<Listenarr.Api.Services.IRemotePathMappingService>();
+            var pathMapMock = new Mock<IRemotePathMappingService>();
             var adapter = new QbittorrentAdapter(factory, pathMapMock.Object, Mock.Of<ITorrentFileDownloader>(), NullLogger<QbittorrentAdapter>.Instance);
 
             var cfg = new DownloadClientConfiguration
@@ -147,7 +148,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
 
             using var http = new HttpClient(handler);
             var factory = new TestHttpClientFactory(http);
-            var pathMapMock = new Mock<Listenarr.Api.Services.IRemotePathMappingService>();
+            var pathMapMock = new Mock<IRemotePathMappingService>();
             var adapter = new QbittorrentAdapter(factory, pathMapMock.Object, Mock.Of<ITorrentFileDownloader>(), NullLogger<QbittorrentAdapter>.Instance);
 
             var cfg = new DownloadClientConfiguration
@@ -225,7 +226,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
 
             var adapter = new QbittorrentAdapter(
                 new TestHttpClientFactory(http),
-                Mock.Of<Listenarr.Api.Services.IRemotePathMappingService>(),
+                Mock.Of<IRemotePathMappingService>(),
                 downloader.Object,
                 NullLogger<QbittorrentAdapter>.Instance);
 
@@ -260,7 +261,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
 
             var adapter = new QbittorrentAdapter(
                 new TestHttpClientFactory(http),
-                Mock.Of<Listenarr.Api.Services.IRemotePathMappingService>(),
+                Mock.Of<IRemotePathMappingService>(),
                 Mock.Of<ITorrentFileDownloader>(),
                 NullLogger<QbittorrentAdapter>.Instance);
 
@@ -309,7 +310,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
         public async Task GetImportItemAsync_PrepopulatedContentPath_AppliesRemoteMapping_ForDockerAutoImport()
         {
             string localPath = FileUtils.GetAbsolutePath("media", "downloads", "Stephen King", "It.m4b");
-            var pathMapMock = new Mock<Listenarr.Api.Services.IRemotePathMappingService>(MockBehavior.Strict);
+            var pathMapMock = new Mock<IRemotePathMappingService>(MockBehavior.Strict);
             pathMapMock
                 .Setup(m => m.TranslatePathAsync("qbit-client", "/qbit-downloads/Stephen King/It.m4b"))
                 .ReturnsAsync(localPath);
@@ -354,7 +355,7 @@ namespace Listenarr.Tests.Features.Api.Services.Adapters
         public async Task GetImportItemAsync_PrepopulatedContentPath_KeepsLocalPath_ForNonDockerAutoImport()
         {
             string localPath = FileUtils.GetAbsolutePath("media", "downloads", "Stephen King", "It.m4b");
-            var pathMapMock = new Mock<Listenarr.Api.Services.IRemotePathMappingService>(MockBehavior.Strict);
+            var pathMapMock = new Mock<IRemotePathMappingService>(MockBehavior.Strict);
             pathMapMock
                 .Setup(m => m.TranslatePathAsync("qbit-client", localPath))
                 .ReturnsAsync(localPath);

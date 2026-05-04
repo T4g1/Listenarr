@@ -15,7 +15,10 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-using Listenarr.Domain.Utils;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Models.Enumerations;
+using Listenarr.Domain.Common;
 
 namespace Listenarr.Api.Services
 {
@@ -54,7 +57,7 @@ namespace Listenarr.Api.Services
             if (audiobookIds == null || audiobookIds.Length == 0) return new();
             if (audiobookIds.Length > MaxAudiobookIds) throw new ArgumentException($"Cannot preview more than {MaxAudiobookIds} audiobooks at once.");
 
-            var settings = await _configService.GetApplicationSettingsAsync() ?? new ApplicationSettings();
+            var settings = await _configService.GetApplicationSettingsAsync();
             var rootFolders = await LoadRootFoldersAsync();
 
             var audiobooks = await _audiobookRepository.GetByIdsWithFilesAsync(audiobookIds, ct);
@@ -67,7 +70,7 @@ namespace Listenarr.Api.Services
             if (operations == null || operations.Count == 0) return new();
             if (operations.Count > MaxAudiobookIds) throw new ArgumentException($"Cannot execute more than {MaxAudiobookIds} rename operations at once.");
 
-            var settings = await _configService.GetApplicationSettingsAsync() ?? new ApplicationSettings();
+            var settings = await _configService.GetApplicationSettingsAsync();
             var rootFolders = await LoadRootFoldersAsync();
             var results = new List<RenameResult>();
             foreach (var op in operations) results.Add(await ExecuteSingleAsync(op, settings, rootFolders, ct));
@@ -261,7 +264,7 @@ namespace Listenarr.Api.Services
 
                 if (!PathsEqual(source, dest))
                 {
-                    var moved = await _fileMover.MoveFileAsync(source, dest);
+                    var moved = await _fileMover.PerformActionOn(FileAction.Move, source, dest);
                     if (!moved)
                     {
                         item.Success = false;

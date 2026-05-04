@@ -18,6 +18,7 @@
 using System.Reflection;
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
 using Listenarr.Application.Repositories;
 using Listenarr.Domain.Models;
 using Microsoft.Extensions.DependencyInjection;

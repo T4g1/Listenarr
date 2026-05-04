@@ -24,6 +24,8 @@ using Listenarr.Api.Services.Search.Strategies;
 using Microsoft.Extensions.Caching.Memory;
 using Listenarr.Api.Extensions;
 using AsyncKeyedLock;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Services
 {

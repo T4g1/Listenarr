@@ -19,9 +19,11 @@ using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
 using Moq;
 using Xunit;
-using Listenarr.Api.Services.Metadata;
 using Listenarr.Tests.Common;
 using Microsoft.Extensions.DependencyInjection;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Enumerations;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -74,7 +76,7 @@ namespace Listenarr.Tests.Features.Api.Services
             {
                 OutputPath = outputRoot,
                 EnableMetadataProcessing = true,
-                CompletedFileAction = "Move",
+                CompletedFileAction = FileAction.Move,
                 AllowedFileExtensions = new List<string> { ".m4b", ".mp3" },
                 EnabledNotificationTriggers = new List<string>(),
                 WebhookUrl = string.Empty

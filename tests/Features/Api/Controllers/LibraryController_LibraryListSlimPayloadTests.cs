@@ -20,7 +20,7 @@ using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
 using Listenarr.Application.Repositories;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Infrastructure.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +28,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Controllers
 {

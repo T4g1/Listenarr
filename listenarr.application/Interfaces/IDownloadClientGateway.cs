@@ -15,7 +15,9 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-namespace Listenarr.Api.Services
+using Listenarr.Domain.Models;
+
+namespace Listenarr.Application.Interfaces
 {
     public interface IDownloadClientGateway
     {
@@ -29,5 +31,12 @@ namespace Listenarr.Api.Services
         /// Marks a download as imported in the client (e.g., changes torrent category).
         /// </summary>
         Task<bool> MarkItemAsImportedAsync(DownloadClientConfiguration client, string downloadId, CancellationToken ct = default);
+
+        Task<QueueItem> GetImportItemAsync(
+            DownloadClientConfiguration client,
+            Download download,
+            QueueItem queueItem,
+            CancellationToken ct = default);
+
     }
 }

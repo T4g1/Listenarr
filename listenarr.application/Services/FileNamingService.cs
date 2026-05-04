@@ -18,9 +18,12 @@
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using SixLabors.ImageSharp;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Domain.Models;
+using Microsoft.Extensions.Logging;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Application.Services
 {
     public class FileNamingService : IFileNamingService
     {
@@ -431,7 +434,7 @@ namespace Listenarr.Api.Services
         /// On Windows: total path ≤ 259 chars, each component ≤ 255 chars.
         /// Truncates the longest non-root components first while preserving the file extension.
         /// </summary>
-        internal string EnsurePathWithinLimits(string fullPath)
+        public string EnsurePathWithinLimits(string fullPath)
         {
             if (string.IsNullOrWhiteSpace(fullPath))
                 return fullPath;

@@ -24,6 +24,7 @@ using Listenarr.Api.Controllers;
 using Listenarr.Domain.Models;
 using Listenarr.Api.Services;
 using Listenarr.Application.Repositories;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Controllers
 {

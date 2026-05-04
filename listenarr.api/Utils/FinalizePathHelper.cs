@@ -16,6 +16,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Text.RegularExpressions;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Api.Utils
 {

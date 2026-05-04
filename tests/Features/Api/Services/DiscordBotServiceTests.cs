@@ -25,6 +25,7 @@ using Listenarr.Api.Services;
 using System.Runtime.InteropServices;
 using Listenarr.Domain.Models;
 using Moq;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Services
 {

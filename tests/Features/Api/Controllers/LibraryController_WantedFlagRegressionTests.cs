@@ -18,6 +18,7 @@
 using System.Text.Json;
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
 using Listenarr.Application.Repositories;
 using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Models;

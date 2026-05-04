@@ -23,6 +23,10 @@ using Listenarr.Api.Services;
 using Listenarr.Tests.Common;
 using Listenarr.Tests.Builders;
 using Listenarr.Domain.Models;
+using Listenarr.Tests.Mocks;
+using Listenarr.Application.Interfaces;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Listenarr.Application.Services;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -81,7 +85,7 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.NotNull(method);
 
             // Invoke and await the returned Task
-            var task = (Task)method!.Invoke(svc, [job, scope, CancellationToken.None])!;
+            var task = (Task)method!.Invoke(svc, [job, CancellationToken.None])!;
             await task;
 
             // Persist job updates (ProcessQueueAsync usually updates job at the end)
@@ -110,19 +114,24 @@ namespace Listenarr.Tests.Features.Api.Services
             var coverPath = await FileService.GetFileAsync(sourceDir, "cover.jpg");
             var txtPath = await FileService.GetFileAsync(sourceDir, "book.txt");
 
-            var download = new DownloadBuilder()
+            var audiobook = await _audiobookRepository.AddAsync(new AudiobookBuilder()
+                .WithBasePath(destRoot)
+                .Build());
+
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
                 .WithId("dir-batch-test-1")
                 .WithCompletedStatus(DateTime.UtcNow)
                 .WithPath(sourceDir)
                 .WithStartDate(DateTime.UtcNow)
-                .Build();
-
-            await _downloadRepository.AddAsync(download);
+                .WithDownloadClientConfiguration(await CreateDownloadClientConfiguration())
+                .WithAudiobook(audiobook)
+                .Build());
 
             var job = new DownloadProcessingJob
             {
                 Id = "job-dir-batch-1",
                 DownloadId = download.Id,
+                DownloadClientId = download.DownloadClientId,
                 JobType = ProcessingJobType.MoveOrCopyFile,
                 Status = ProcessingJobStatus.Processing,
                 SourcePath = sourceDir
@@ -148,9 +157,8 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.NotNull(method);
 
             var svc = _provider.GetRequiredService<DownloadProcessingBackgroundService>();
-            using var scope = _provider.CreateScope();
 
-            var task = (Task)method!.Invoke(svc, [job, scope, CancellationToken.None])!;
+            var task = (Task)method!.Invoke(svc, [job, CancellationToken.None])!;
             await task;
 
             Assert.True(File.Exists(expectedAudioDest));
@@ -175,6 +183,32 @@ namespace Listenarr.Tests.Features.Api.Services
             var txtPath = await FileService.GetFileAsync(sourceDir, "book.txt");
             var unrelatedPath = await FileService.GetFileAsync(sourceDir, "unrelated.txt");
 
+            var downloadClientGatewayMock = new DownloadClientGatewayMock
+            {
+                SourceFiles = [audioPath, coverPath, txtPath]
+            };
+            _services.AddSingleton<IDownloadClientGateway>(downloadClientGatewayMock);
+            _services.Replace(new ServiceDescriptor(typeof(IDownloadItemService), typeof(DownloadItemService), ServiceLifetime.Singleton));
+
+            string? processedPath = null;
+            var downloadServiceMock = _provider.GetRequiredService<Mock<IDownloadService>>();
+            downloadServiceMock
+                .Setup(d => d.ProcessCompletedDownloadAsync(It.IsAny<string>(), It.IsAny<string>()))
+                .Callback<string, string>(async (id, path) =>
+                {
+                    processedPath = path;
+                    var tracked = await _downloadRepository.GetByIdAsync(id);
+                    if (tracked != null)
+                    {
+                        tracked.Status = DownloadStatus.Moved;
+                        tracked.FinalPath = path;
+                        await _downloadRepository.UpdateAsync(tracked);
+                    }
+                })
+                .Returns(Task.CompletedTask);
+            _services.AddSingleton(downloadServiceMock.Object);
+            Init();
+
             var client = await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfigurationBuilder()
                 .WithId("client-1")
                 .Build());
@@ -193,6 +227,7 @@ namespace Listenarr.Tests.Features.Api.Services
             {
                 Id = "job-dir-batch-client-scope-1",
                 DownloadId = download.Id,
+                DownloadClientId = client.Id,
                 JobType = ProcessingJobType.MoveOrCopyFile,
                 Status = ProcessingJobStatus.Processing,
                 SourcePath = sourceDir
@@ -204,42 +239,11 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithoutMetadataProcessing()
                 .Build());
 
-            var importResolverMock = _provider.GetRequiredService<Mock<IImportItemResolutionService>>();
-            importResolverMock
-                .Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == download.Id),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
-                {
-                    queueItem.SourceFiles = [audioPath, coverPath, txtPath];
-                    return queueItem;
-                });
-
-            string? processedPath = null;
-            var downloadServiceMock = _provider.GetRequiredService<Mock<IDownloadService>>();
-            downloadServiceMock
-                .Setup(d => d.ProcessCompletedDownloadAsync(download.Id, It.IsAny<string>()))
-                .Callback<string, string>(async (id, path) =>
-                {
-                    processedPath = path;
-                    var tracked = await _downloadRepository.GetByIdAsync(id);
-                    if (tracked != null)
-                    {
-                        tracked.Status = DownloadStatus.Moved;
-                        tracked.FinalPath = path;
-                        await _downloadRepository.UpdateAsync(tracked);
-                    }
-                })
-                .Returns(Task.CompletedTask);
-
-            using var scope = _provider.CreateScope();
             var method = typeof(DownloadProcessingBackgroundService).GetMethod("ProcessMoveOrCopyJobAsync", BindingFlags.NonPublic | BindingFlags.Instance);
             Assert.NotNull(method);
 
             var svc = _provider.GetRequiredService<DownloadProcessingBackgroundService>();
-            var task = (Task)method!.Invoke(svc, [job, scope, CancellationToken.None])!;
+            var task = (Task)method!.Invoke(svc, [job, CancellationToken.None])!;
             await task;
 
             Assert.True(File.Exists(Path.Join(destRoot, "book.m4b")));

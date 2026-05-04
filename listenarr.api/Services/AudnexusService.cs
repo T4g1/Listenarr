@@ -18,6 +18,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Services
 {

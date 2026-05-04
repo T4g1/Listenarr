@@ -15,19 +15,20 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+using Listenarr.Application.Common;
+using Listenarr.Application.Interfaces;
+
 namespace Listenarr.Api.Services
 {
-    public class DownloadClientGateway : IDownloadClientGateway
+    /// <summary>
+    /// Responsabilities:
+    /// - Make sure any path reported by any download client adapter is mapped using adequate Remote Path Mapping
+    /// - Single point of contact for any download client adapter, no download client adapter detail should be visible behind this
+    /// </summary>
+    /// <param name="factory"></param>
+    /// <param name="logger"></param>
+    public class DownloadClientGateway(IDownloadClientAdapterFactory factory, ILogger<DownloadClientGateway> logger) : IDownloadClientGateway
     {
-        private readonly IDownloadClientAdapterFactory _factory;
-        private readonly ILogger<DownloadClientGateway> _logger;
-
-        public DownloadClientGateway(IDownloadClientAdapterFactory factory, ILogger<DownloadClientGateway> logger)
-        {
-            _factory = factory ?? throw new ArgumentNullException(nameof(factory));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
         private IDownloadClientAdapter ResolveAdapter(DownloadClientConfiguration client)
         {
             if (client == null)
@@ -45,7 +46,7 @@ namespace Listenarr.Api.Services
 
                 try
                 {
-                    return _factory.GetByIdOrType(key);
+                    return factory.GetByIdOrType(key);
                 }
                 catch (InvalidOperationException)
                 {
@@ -59,7 +60,7 @@ namespace Listenarr.Api.Services
                 : client.Type ?? client.Id ?? "unknown";
 
             var message = $"No download client adapter registered for {LogRedaction.SanitizeText(descriptor)}.";
-            _logger.LogError(message);
+            logger.LogError(message);
             throw new InvalidOperationException(message);
         }
 
@@ -98,5 +99,17 @@ namespace Listenarr.Api.Services
             var adapter = ResolveAdapter(client);
             return adapter.MarkItemAsImportedAsync(client, downloadId, ct);
         }
+
+        public Task<QueueItem> GetImportItemAsync(
+            DownloadClientConfiguration client,
+            Download download,
+            QueueItem queueItem,
+            CancellationToken ct = default)
+        {
+            var adapter = ResolveAdapter(client);
+            return adapter.GetImportItemAsync(client, download, queueItem, null, ct);
+        }
+
+        // TODO: Apply path mapping on all file paths
     }
 }

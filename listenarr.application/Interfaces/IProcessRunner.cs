@@ -17,7 +17,7 @@
  */
 using System.Diagnostics;
 
-namespace Listenarr.Api.Services
+namespace Listenarr.Application.Interfaces
 {
     public record ProcessResult(int ExitCode, string Stdout, string Stderr, bool TimedOut);
 

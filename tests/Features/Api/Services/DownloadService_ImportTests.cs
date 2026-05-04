@@ -19,25 +19,26 @@ using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Moq;
 using Listenarr.Api.Services;
-using Listenarr.Api.Services.Metadata;
 using Listenarr.Tests.Common;
 using Listenarr.Domain.Models;
 using Listenarr.Tests.Builders;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Models.Enumerations;
+using Listenarr.Tests.Mocks;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
     public class DownloadService_ImportTests : BaseTests
     {
         private DownloadClientConfiguration _client = new DownloadClientConfigurationBuilder().Build();
+        private Audiobook _audiobook = new AudiobookBuilder().Build();
+        private Download _download = new DownloadBuilder().Build();
+        private MetadataServiceMock metadataServiceMock = new MetadataServiceMock();
 
         public override async Task InitializeAsync()
         {
-            // Mock services
-            var metadataMock = new Mock<IMetadataService>();
-            metadataMock.Setup(m => m.ExtractFileMetadataAsync(It.IsAny<string>()))
-                .ReturnsAsync(new AudioMetadata { Format = "mp3", BitRate = 128000 });
-
-            _services.AddSingleton(metadataMock.Object);
+            _services.AddSingleton<IMetadataService>(metadataServiceMock);
             Init();
 
             await InitData();
@@ -60,6 +61,12 @@ namespace Listenarr.Tests.Features.Api.Services
                 Port = 8080,
                 IsEnabled = true
             });
+
+            _audiobook = await CreateAudiobook();
+
+            _download.DownloadClientId = _client.Id;
+            _download.AudiobookId = _audiobook.Id;
+            await _downloadRepository.AddAsync(_download);
         }
 
         [Fact]
@@ -99,7 +106,7 @@ namespace Listenarr.Tests.Features.Api.Services
             };
             await _downloadRepository.AddAsync(download);
 
-            await _applicationSettingsRepository.SaveAsync(new ApplicationSettings { OutputPath = Path.GetTempPath(), EnableMetadataProcessing = true, CompletedFileAction = "Move" });
+            await _applicationSettingsRepository.SaveAsync(new ApplicationSettings { OutputPath = Path.GetTempPath(), EnableMetadataProcessing = true, CompletedFileAction = FileAction.Move });
 
             // Act - process completed download
             var downloadService = _provider.GetRequiredService<DownloadService>();
@@ -183,15 +190,10 @@ namespace Listenarr.Tests.Features.Api.Services
             var part2 = await FileService.GetFileAsync(srcDir, "Part 2.mp3", "two");
             var part1 = await FileService.GetFileAsync(srcDir, "Part 1.mp3", "one");
 
-            _services.AddScoped<IMetadataService, MetadataService>();
-            var metadataMock = new Mock<IMetadataService>();
-            metadataMock.Setup(m => m.ExtractFileMetadataAsync(It.IsAny<string>()))
-                .ReturnsAsync(
-                    new AudioMetadata { Title = "Ordered Download", Format = "mp3", BitRate = 128000 });
-            _services.AddSingleton(metadataMock.Object);
+            metadataServiceMock.AddMetadata(@"\.mp3$", new AudioMetadata { Title = "Ordered Download", Format = "mp3", BitRate = 128000 });
 
-            Init();
-            await InitData();
+            _audiobook.BasePath = outputDir;
+            await _audiobookRepository.UpdateAsync(_audiobook);
 
             var settings = await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithOutputPath(outputDir)
@@ -202,12 +204,8 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithMultiFileNamingPattern("{Title}-{DiskNumber:00}")
                 .Build());
 
-            var importService = _provider.GetRequiredService<IImportService>();
-            var results = await importService.ImportFilesFromDirectoryAsync(
-                "ordered-download",
-                audiobookId: null,
-                [part10, part2, part1],
-                settings);
+            var downloadImportService = _provider.GetRequiredService<IDownloadImportService>();
+            var results = await downloadImportService.ImportFilesFromDirectoryAsync(_download, _audiobook, [part10, part2, part1], settings);
 
             var mapped = results
                 .Where(r => r.Success && !string.IsNullOrWhiteSpace(r.FinalPath) && !string.IsNullOrWhiteSpace(r.SourcePath))

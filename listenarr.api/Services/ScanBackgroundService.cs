@@ -16,7 +16,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using System.Text.Json;
-using Listenarr.Domain.Utils;
+using Listenarr.Application.Common;
+using Listenarr.Application.Interfaces;
+using Listenarr.Domain.Common;
 
 namespace Listenarr.Api.Services
 {
@@ -331,10 +333,10 @@ namespace Listenarr.Api.Services
                                 try
                                 {
                                     using var afScope = _scopeFactory.CreateScope();
-                                    var audioFileService = afScope.ServiceProvider.GetRequiredService<IAudioFileService>();
+                                    var audioFileService = afScope.ServiceProvider.GetRequiredService<IAudiobookFileService>();
 
                                     // Store absolute path - metadata extraction needs full path
-                                    var created = await audioFileService.EnsureAudiobookFileAsync(audiobook.Id, filePath, "scan");
+                                    var created = await audioFileService.EnsureAudiobookFileAsync(audiobook, filePath, "scan");
                                     if (created) createdFiles++;
                                 }
                                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
@@ -442,8 +444,8 @@ namespace Listenarr.Api.Services
                                             try
                                             {
                                                 using var afScope = _scopeFactory.CreateScope();
-                                                var audioFileService = afScope.ServiceProvider.GetRequiredService<IAudioFileService>();
-                                                var created = await audioFileService.EnsureAudiobookFileAsync(audiobook.Id, audiobook.FilePath, "scan-legacy");
+                                                var audioFileService = afScope.ServiceProvider.GetRequiredService<IAudiobookFileService>();
+                                                var created = await audioFileService.EnsureAudiobookFileAsync(audiobook, audiobook.FilePath, "scan-legacy");
                                                 if (created)
                                                 {
                                                     _logger.LogInformation("Migrated legacy filePath to AudiobookFile record for audiobook {AudiobookId}: {Path}", audiobook.Id, LogRedaction.SanitizeFilePath(audiobook.FilePath));

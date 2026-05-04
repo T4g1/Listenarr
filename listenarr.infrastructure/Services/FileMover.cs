@@ -20,8 +20,12 @@ using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Options;
-using System.Text.Json.Serialization;
-using Listenarr.Domain.Utils;
+using Listenarr.Application.Interfaces;
+using Microsoft.Extensions.Logging;
+using Listenarr.Application.Models.Enumerations;
+using Listenarr.Application.Common;
+using Listenarr.Domain.Common;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Api.Services
 {
@@ -395,59 +399,6 @@ namespace Listenarr.Api.Services
             }
         }
 
-        private async Task<int?> RunRobocopyAsync(string sourceDir, string destDir, bool move = false, string? filePattern = null)
-        {
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return null;
-
-            if (!_options.EnableRobocopy) return null;
-
-            var args = new List<string> { sourceDir, destDir };
-
-            if (!string.IsNullOrWhiteSpace(filePattern))
-            {
-                args.Add(filePattern);
-            }
-
-            // Use /MOV for files or /MOVE for directories to move and delete source
-            if (move)
-            {
-                // For directories, /MOVE is appropriate; for file pattern present, /MOV
-                args.Add(string.IsNullOrWhiteSpace(filePattern) ? "/MOVE" : "/MOV");
-            }
-
-            // Mirror recursion for directories
-            args.AddRange(new[] { "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP" });
-
-            var startInfo = CreateRobocopyStartInfo(args.ToArray());
-
-            try
-            {
-                if (_processRunner != null)
-                {
-                    var pr = await _processRunner.RunAsync(startInfo, _options.RobocopyTimeoutMs);
-                    if (pr.TimedOut)
-                    {
-                        _logger.LogWarning("Robocopy timed out after {Ms}ms. Stdout: {Out} Stderr: {Err}", _options.RobocopyTimeoutMs, LogRedaction.RedactText(Truncate(pr.Stdout, 2000), LogRedaction.GetSensitiveValuesFromEnvironment()), LogRedaction.RedactText(Truncate(pr.Stderr, 2000), LogRedaction.GetSensitiveValuesFromEnvironment()));
-                        return null;
-                    }
-
-                    var exit = pr.ExitCode;
-                    _logger.LogDebug("Robocopy exit code {Exit}. Stdout: {Out} Stderr: {Err}", exit, LogRedaction.RedactText(Truncate(pr.Stdout, 2000), LogRedaction.GetSensitiveValuesFromEnvironment()), LogRedaction.RedactText(Truncate(pr.Stderr, 2000), LogRedaction.GetSensitiveValuesFromEnvironment()));
-                    return exit;
-                }
-                else
-                {
-                    _logger.LogWarning("Robocopy requested but no IProcessRunner is registered; skipping direct process start for safety.");
-                    return null;
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
-            {
-                _logger.LogWarning(ex, "Exception while running robocopy");
-                return null;
-            }
-        }
-
         private static string Truncate(string? s, int max)
         {
             if (string.IsNullOrEmpty(s)) return string.Empty;
@@ -474,26 +425,9 @@ namespace Listenarr.Api.Services
             return startInfo;
         }
 
-        public enum FileAction
+        public async Task<bool> PerformActionOn(FileAction action, string source, string? destination = null)
         {
-            [JsonPropertyName("none")]
-            None,
-            [JsonPropertyName("move")]
-            Move,
-            [JsonPropertyName("copy")]
-            Copy,
-            [JsonPropertyName("hardlink/copy")]
-            HardlinkCopy
-        }
-
-        public async Task PerformActionOn(FileAction action, string source, string? destination = null, HashSet<string>? usedDestinations = null)
-        {
-            if (action == FileAction.None || destination == null) return;
-
-            if (usedDestinations == null)
-            {
-                usedDestinations = [];
-            }
+            if (action == FileAction.None || destination == null) return true;
 
             // Ensure destination directory exists
             var directory = Path.GetDirectoryName(destination);
@@ -502,29 +436,33 @@ namespace Listenarr.Api.Services
                 Directory.CreateDirectory(directory);
             }
 
-            destination = FileUtils.GetUniqueDestinationPath(destination, System.IO.File.Exists, usedDestinations);
-
             try
             {
                 switch (action)
                 {
                     case FileAction.Move:
-                        System.IO.File.Move(source, destination, overwrite: false);
-                        break;
+                        if (await MoveFileAsync(source, destination))
+                        {
+                            var sourceDirectory = Path.GetDirectoryName(source);
+                            if (sourceDirectory != null)
+                            {
+                                FileUtils.DeleteEmptyDirectories(sourceDirectory);
+                            }
+                            return true;
+                        }
+                        return false;
                     case FileAction.HardlinkCopy:
-                        if (!await HardlinkFileAsync(source, destination))
-                            throw new IOException($"HardlinkFileAsync failed: {source} -> {destination}");
-                        break;
+                        return await HardlinkFileAsync(source, destination);
                     case FileAction.Copy:
-                        System.IO.File.Copy(source, destination, overwrite: false);
-                        break;
+                        return await CopyFileAsync(source, destination);
                 }
 
-                usedDestinations.Add(destination);
+                // Unhandled action: We are unable to fulfill the request
+                return false;
             }
-            catch (IOException exception)
+            catch (Exception exception) when (exception is not (OperationCanceledException or OutOfMemoryException or StackOverflowException))
             {
-                throw new InvalidOperationException($"Unable to perform {action} on {source}", exception);
+                throw new InvalidOperationException($"Unable to perform {action} on {source} to {destination}", exception);
             }
         }
     }

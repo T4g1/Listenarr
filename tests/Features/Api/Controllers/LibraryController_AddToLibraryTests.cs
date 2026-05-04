@@ -16,35 +16,37 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
 using Listenarr.Api.Controllers;
 using Listenarr.Domain.Models;
 using Listenarr.Api.Services;
-using Listenarr.Application.Repositories;
-using Listenarr.Infrastructure.Models;
+using Listenarr.Tests.Common;
+using Listenarr.Tests.Builders;
 
 namespace Listenarr.Tests.Features.Api.Controllers
 {
-    public class LibraryController_AddToLibraryTests
+    public class LibraryController_AddToLibraryTests : BaseTests
     {
-        private static void TryDeleteDirectory(string path)
+        private readonly Mock<IImageCacheService> imageCacheServiceMock = new Mock<IImageCacheService>();
+        private readonly string imageUrl1 = "http://example.com/a1.jpg";
+        private readonly string imageUrl2 = "http://example.com/a2.jpg";
+        public override async Task InitializeAsync()
         {
-            try
-            {
-                Directory.Delete(path, true);
-            }
-            catch (IOException ex)
-            {
-                System.Diagnostics.Debug.WriteLine(ex.Message);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                System.Diagnostics.Debug.WriteLine(ex.Message);
-            }
+            imageCacheServiceMock.Setup(m => m.MoveToLibraryStorageAsync(It.IsAny<string>(), imageUrl1)).ReturnsAsync("config/cache/images/library/B000TEST01.jpg");
+            imageCacheServiceMock.Setup(m => m.MoveToLibraryStorageAsync(It.IsAny<string>(), imageUrl2)).ReturnsAsync("config/cache/images/library/derived.jpg");
+            _services.AddSingleton(imageCacheServiceMock.Object);
+
+            Init();
+            await InitDataAsync();
+        }
+
+        private async Task InitDataAsync()
+        {
+            await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
+                .WithFileNamingPattern("{Author}/{Title}")
+                .Build());
         }
 
         private static string BuildLibraryPath(Dictionary<string, object> vars)
@@ -61,57 +63,10 @@ namespace Listenarr.Tests.Features.Api.Controllers
         [Fact]
         public async Task AddToLibrary_UsesLegacyAuthorField_PopulatesAuthorsAndBasePath()
         {
-            // Arrange
-            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
-                .Options;
-
-            var dbContext = new ListenArrDbContext(options);
-
-            var mockRepo = new Mock<IAudiobookRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Audiobook>()))
-                .Returns<Audiobook>(async (ab) =>
-                {
-                    await dbContext.Audiobooks.AddAsync(ab);
-                    await dbContext.SaveChangesAsync();
-                });
-
-            var mockImageCache = new Mock<IImageCacheService>();
-            var mockLogger = new Mock<ILogger<LibraryController>>();
-
-            var mockFileNaming = new Mock<IFileNamingService>();
-            mockFileNaming
-                .Setup(f => f.ApplyNamingPattern(It.IsAny<string>(), It.IsAny<Dictionary<string, object>>(), false))
-                .Returns((string pattern, Dictionary<string, object> vars, bool t) => BuildLibraryPath(vars));
-
             // Configuration service providing an OutputPath root
-            var tempRoot = Path.Join(Path.GetTempPath(), "listenarr-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tempRoot);
+            var tempRoot = FileService.GetTempDirectory("listenarr-test");
 
-            var mockConfigService = new Mock<IConfigurationService>();
-            mockConfigService.Setup(c => c.GetApplicationSettingsAsync())
-                .ReturnsAsync(new ApplicationSettings { OutputPath = tempRoot, FileNamingPattern = "{Author}/{Title}" });
-
-            var mockQualityProfile = new Mock<IQualityProfileService>();
-            mockQualityProfile.Setup(q => q.GetDefaultAsync()).ReturnsAsync((QualityProfile?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfigurationService>(mockConfigService.Object);
-            services.AddSingleton<IQualityProfileService>(mockQualityProfile.Object);
-            var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-            var controller = new LibraryController(
-                mockRepo.Object,
-                mockImageCache.Object,
-                mockLogger.Object,
-                scopeFactory,
-                new Mock<IHistoryRepository>().Object,
-                new Mock<IAudiobookFileRepository>().Object,
-                new Mock<IQualityProfileRepository>().Object,
-                new Mock<IDownloadRepository>().Object,
-                new Mock<IRootFolderRepository>().Object,
-                mockFileNaming.Object);
+            var controller = _provider.GetRequiredService<LibraryController>();
 
             var request = new LibraryController.AddToLibraryRequest
             {
@@ -129,71 +84,22 @@ namespace Listenarr.Tests.Features.Api.Controllers
             // Assert
             Assert.IsType<OkObjectResult>(actionResult);
 
-            var stored = await dbContext.Audiobooks.FirstOrDefaultAsync();
+            var stored = (await _audiobookRepository.GetAllAsync()).First();
             Assert.NotNull(stored);
             Assert.NotNull(stored.Authors);
             Assert.Contains("Legacy Author", stored.Authors);
             // BasePath should only be set when a custom destination path is explicitly provided
             // When no custom path is given, ImportService uses the default file naming pattern from settings
             Assert.True(string.IsNullOrWhiteSpace(stored.BasePath), "BasePath should be null when no custom destination is provided");
-
-            // Cleanup
-            TryDeleteDirectory(tempRoot);
         }
 
         [Fact]
         public async Task AddToLibrary_PersistsEditableMetadataFields()
         {
             // Arrange
-            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
-                .Options;
+            var tempRoot = FileService.GetTempDirectory("listenarr-test");
 
-            var dbContext = new ListenArrDbContext(options);
-
-            var mockRepo = new Mock<IAudiobookRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Audiobook>()))
-                .Returns<Audiobook>(async (ab) =>
-                {
-                    await dbContext.Audiobooks.AddAsync(ab);
-                    await dbContext.SaveChangesAsync();
-                });
-
-            var mockImageCache = new Mock<IImageCacheService>();
-            var mockLogger = new Mock<ILogger<LibraryController>>();
-
-            var mockFileNaming = new Mock<IFileNamingService>();
-            mockFileNaming
-                .Setup(f => f.ApplyNamingPattern(It.IsAny<string>(), It.IsAny<Dictionary<string, object>>(), false))
-                .Returns((string pattern, Dictionary<string, object> vars, bool t) => BuildLibraryPath(vars));
-
-            var tempRoot = Path.Join(Path.GetTempPath(), "listenarr-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tempRoot);
-
-            var mockConfigService = new Mock<IConfigurationService>();
-            mockConfigService.Setup(c => c.GetApplicationSettingsAsync())
-                .ReturnsAsync(new ApplicationSettings { OutputPath = tempRoot, FileNamingPattern = "{Author}/{Title}" });
-
-            var mockQualityProfile = new Mock<IQualityProfileService>();
-            mockQualityProfile.Setup(q => q.GetDefaultAsync()).ReturnsAsync((QualityProfile?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfigurationService>(mockConfigService.Object);
-            services.AddSingleton<IQualityProfileService>(mockQualityProfile.Object);
-            var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-            var controller = new LibraryController(
-                mockRepo.Object,
-                mockImageCache.Object,
-                mockLogger.Object,
-                scopeFactory,
-                new Mock<IHistoryRepository>().Object,
-                new Mock<IAudiobookFileRepository>().Object,
-                new Mock<IQualityProfileRepository>().Object,
-                new Mock<IDownloadRepository>().Object,
-                new Mock<IRootFolderRepository>().Object,
-                mockFileNaming.Object);
+            var controller = _provider.GetRequiredService<LibraryController>();
 
             var request = new LibraryController.AddToLibraryRequest
             {
@@ -221,7 +127,7 @@ namespace Listenarr.Tests.Features.Api.Controllers
             // Assert
             Assert.IsType<OkObjectResult>(actionResult);
 
-            var stored = await dbContext.Audiobooks.FirstOrDefaultAsync();
+            var stored = (await _audiobookRepository.GetAllAsync()).First();
             Assert.NotNull(stored);
             Assert.Equal("Editable Title", stored.Title);
             Assert.Equal("Editable Subtitle", stored.Subtitle);
@@ -238,80 +144,17 @@ namespace Listenarr.Tests.Features.Api.Controllers
             Assert.Contains("Edited Narrator", stored.Narrators);
             Assert.NotNull(stored.Isbn);
             Assert.Contains("9781234567890", stored.Isbn);
-
-            // Cleanup
-            try
-            {
-                Directory.Delete(tempRoot, true);
-            }
-            catch (IOException ex)
-            {
-                Console.Error.WriteLine($"Ignoring cleanup failure for '{tempRoot}': {ex.Message}");
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Console.Error.WriteLine($"Ignoring cleanup failure for '{tempRoot}': {ex.Message}");
-            }
         }
 
         [Fact]
         public async Task AddToLibrary_WithAsin_MovesImageToLibraryStorage()
         {
-            // Arrange
-            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
-                .Options;
-
-            var dbContext = new ListenArrDbContext(options);
-
-            var mockRepo = new Mock<IAudiobookRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Audiobook>()))
-                .Returns<Audiobook>(async (ab) =>
-                {
-                    await dbContext.Audiobooks.AddAsync(ab);
-                    await dbContext.SaveChangesAsync();
-                });
-
-            var mockImageCache = new Mock<IImageCacheService>();
             var asin = "B000TEST01";
-            var originalUrl = "http://example.com/a1.jpg";
-            mockImageCache.Setup(m => m.MoveToLibraryStorageAsync(asin, originalUrl)).ReturnsAsync("config/cache/images/library/B000TEST01.jpg");
-
-            var mockLogger = new Mock<ILogger<LibraryController>>();
-
-            var mockFileNaming = new Mock<IFileNamingService>();
-            mockFileNaming
-                .Setup(f => f.ApplyNamingPattern(It.IsAny<string>(), It.IsAny<Dictionary<string, object>>(), false))
-                .Returns((string pattern, Dictionary<string, object> vars, bool t) => BuildLibraryPath(vars));
 
             // Configuration service providing an OutputPath root
-            var tempRoot = Path.Join(Path.GetTempPath(), "listenarr-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tempRoot);
+            var tempRoot = FileService.GetTempDirectory("listenarr-test");
 
-            var mockConfigService = new Mock<IConfigurationService>();
-            mockConfigService.Setup(c => c.GetApplicationSettingsAsync())
-                .ReturnsAsync(new ApplicationSettings { OutputPath = tempRoot, FileNamingPattern = "{Author}/{Title}" });
-
-            var mockQualityProfile = new Mock<IQualityProfileService>();
-            mockQualityProfile.Setup(q => q.GetDefaultAsync()).ReturnsAsync((QualityProfile?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfigurationService>(mockConfigService.Object);
-            services.AddSingleton<IQualityProfileService>(mockQualityProfile.Object);
-            var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-            var controller = new LibraryController(
-                mockRepo.Object,
-                mockImageCache.Object,
-                mockLogger.Object,
-                scopeFactory,
-                new Mock<IHistoryRepository>().Object,
-                new Mock<IAudiobookFileRepository>().Object,
-                new Mock<IQualityProfileRepository>().Object,
-                new Mock<IDownloadRepository>().Object,
-                new Mock<IRootFolderRepository>().Object,
-                mockFileNaming.Object);
+            var controller = _provider.GetRequiredService<LibraryController>();
 
             var request = new LibraryController.AddToLibraryRequest
             {
@@ -319,8 +162,8 @@ namespace Listenarr.Tests.Features.Api.Controllers
                 {
                     Title = "Move Test",
                     Author = "A Uthor",
-                    Asin = asin,
-                    ImageUrl = originalUrl
+                    Asin = "B000TEST01",
+                    ImageUrl = imageUrl1
                 },
                 Monitored = true
             };
@@ -331,72 +174,19 @@ namespace Listenarr.Tests.Features.Api.Controllers
             // Assert
             Assert.IsType<OkObjectResult>(actionResult);
 
-            var stored = await dbContext.Audiobooks.FirstOrDefaultAsync();
+            var stored = (await _audiobookRepository.GetAllAsync()).First();
             Assert.NotNull(stored);
             Assert.Equal($"/config/cache/images/library/B000TEST01.jpg", stored.ImageUrl);
-            mockImageCache.Verify(m => m.MoveToLibraryStorageAsync(asin, originalUrl), Times.Once);
-
-            // Cleanup
-            TryDeleteDirectory(tempRoot);
+            imageCacheServiceMock.Verify(m => m.MoveToLibraryStorageAsync(asin, imageUrl1), Times.Once);
         }
 
         [Fact]
         public async Task AddToLibrary_WithoutAsin_UsesDerivedKey_AndMovesImageToLibraryStorage()
         {
-            // Arrange
-            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
-                .Options;
-
-            var dbContext = new ListenArrDbContext(options);
-
-            var mockRepo = new Mock<IAudiobookRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Audiobook>()))
-                .Returns<Audiobook>(async (ab) =>
-                {
-                    await dbContext.Audiobooks.AddAsync(ab);
-                    await dbContext.SaveChangesAsync();
-                });
-
-            var mockImageCache = new Mock<IImageCacheService>();
-            var imageUrl = "http://example.com/a2.jpg";
-            mockImageCache.Setup(m => m.MoveToLibraryStorageAsync(It.IsAny<string>(), imageUrl)).ReturnsAsync("config/cache/images/library/derived.jpg");
-
-            var mockLogger = new Mock<ILogger<LibraryController>>();
-
-            var mockFileNaming = new Mock<IFileNamingService>();
-            mockFileNaming
-                .Setup(f => f.ApplyNamingPattern(It.IsAny<string>(), It.IsAny<Dictionary<string, object>>(), false))
-                .Returns((string pattern, Dictionary<string, object> vars, bool t) => BuildLibraryPath(vars));
-
             // Configuration service providing an OutputPath root
-            var tempRoot = Path.Join(Path.GetTempPath(), "listenarr-test-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tempRoot);
+            var tempRoot = FileService.GetTempDirectory("listenarr-test");
 
-            var mockConfigService = new Mock<IConfigurationService>();
-            mockConfigService.Setup(c => c.GetApplicationSettingsAsync())
-                .ReturnsAsync(new ApplicationSettings { OutputPath = tempRoot, FileNamingPattern = "{Author}/{Title}" });
-
-            var mockQualityProfile = new Mock<IQualityProfileService>();
-            mockQualityProfile.Setup(q => q.GetDefaultAsync()).ReturnsAsync((QualityProfile?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfigurationService>(mockConfigService.Object);
-            services.AddSingleton<IQualityProfileService>(mockQualityProfile.Object);
-            var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-            var controller = new LibraryController(
-                mockRepo.Object,
-                mockImageCache.Object,
-                mockLogger.Object,
-                scopeFactory,
-                new Mock<IHistoryRepository>().Object,
-                new Mock<IAudiobookFileRepository>().Object,
-                new Mock<IQualityProfileRepository>().Object,
-                new Mock<IDownloadRepository>().Object,
-                new Mock<IRootFolderRepository>().Object,
-                mockFileNaming.Object);
+            var controller = _provider.GetRequiredService<LibraryController>();
 
             var request = new LibraryController.AddToLibraryRequest
             {
@@ -404,7 +194,7 @@ namespace Listenarr.Tests.Features.Api.Controllers
                 {
                     Title = "Derived Test",
                     Author = "Some Author",
-                    ImageUrl = imageUrl
+                    ImageUrl = imageUrl2
                 },
                 Monitored = true
             };
@@ -415,61 +205,16 @@ namespace Listenarr.Tests.Features.Api.Controllers
             // Assert
             Assert.IsType<OkObjectResult>(actionResult);
 
-            var stored = await dbContext.Audiobooks.FirstOrDefaultAsync();
+            var stored = (await _audiobookRepository.GetAllAsync()).First();
             Assert.NotNull(stored);
             Assert.Equal($"/config/cache/images/library/derived.jpg", stored.ImageUrl);
-            mockImageCache.Verify(m => m.MoveToLibraryStorageAsync(It.IsAny<string>(), imageUrl), Times.Once);
-
-            // Cleanup
-            TryDeleteDirectory(tempRoot);
+            imageCacheServiceMock.Verify(m => m.MoveToLibraryStorageAsync(It.IsAny<string>(), imageUrl2), Times.Once);
         }
 
         [Fact]
         public async Task AddToLibrary_WithCustomPath_StoresCustomPathAsBasePath()
         {
-            // Arrange
-            var options = new DbContextOptionsBuilder<ListenArrDbContext>()
-                .UseInMemoryDatabase(Guid.NewGuid().ToString())
-                .Options;
-
-            var dbContext = new ListenArrDbContext(options);
-
-            var mockRepo = new Mock<IAudiobookRepository>();
-            mockRepo.Setup(r => r.AddAsync(It.IsAny<Audiobook>()))
-                .Returns<Audiobook>(async (ab) =>
-                {
-                    await dbContext.Audiobooks.AddAsync(ab);
-                    await dbContext.SaveChangesAsync();
-                });
-
-            var mockImageCache = new Mock<IImageCacheService>();
-            var mockLogger = new Mock<ILogger<LibraryController>>();
-            var mockFileNaming = new Mock<IFileNamingService>();
-
-            var mockConfigService = new Mock<IConfigurationService>();
-            mockConfigService.Setup(c => c.GetApplicationSettingsAsync())
-                .ReturnsAsync(new ApplicationSettings { OutputPath = "/default/path", FileNamingPattern = "{Author}/{Title}" });
-
-            var mockQualityProfile = new Mock<IQualityProfileService>();
-            mockQualityProfile.Setup(q => q.GetDefaultAsync()).ReturnsAsync((QualityProfile?)null);
-
-            var services = new ServiceCollection();
-            services.AddSingleton<IConfigurationService>(mockConfigService.Object);
-            services.AddSingleton<IQualityProfileService>(mockQualityProfile.Object);
-            var provider = services.BuildServiceProvider();
-            var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-            var controller = new LibraryController(
-                mockRepo.Object,
-                mockImageCache.Object,
-                mockLogger.Object,
-                scopeFactory,
-                new Mock<IHistoryRepository>().Object,
-                new Mock<IAudiobookFileRepository>().Object,
-                new Mock<IQualityProfileRepository>().Object,
-                new Mock<IDownloadRepository>().Object,
-                new Mock<IRootFolderRepository>().Object,
-                mockFileNaming.Object);
+            var controller = _provider.GetRequiredService<LibraryController>();
 
             var customPath = "/custom/audiobooks/Author/Series/Title";
             var request = new LibraryController.AddToLibraryRequest
@@ -489,7 +234,7 @@ namespace Listenarr.Tests.Features.Api.Controllers
             // Assert
             Assert.IsType<OkObjectResult>(actionResult);
 
-            var stored = await dbContext.Audiobooks.FirstOrDefaultAsync();
+            var stored = (await _audiobookRepository.GetAllAsync()).First();
             Assert.NotNull(stored);
             // NormalizeStoredPath calls Path.GetFullPath which is platform-dependent:
             // on Windows "/custom/..." becomes "C:\custom\...", on Linux it stays "/custom/..."

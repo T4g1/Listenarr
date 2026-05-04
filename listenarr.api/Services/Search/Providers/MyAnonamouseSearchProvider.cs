@@ -18,6 +18,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AsyncKeyedLock;
+using Listenarr.Application.Common;
 
 namespace Listenarr.Api.Services.Search.Providers
 {

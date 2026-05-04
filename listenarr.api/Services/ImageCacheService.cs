@@ -17,6 +17,7 @@
  */
 
 using AsyncKeyedLock;
+using Listenarr.Application.Common;
 using SixLabors.ImageSharp;
 using System.Net;
 using System.Net.Sockets;

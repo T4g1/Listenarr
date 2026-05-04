@@ -25,6 +25,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Listenarr.Domain.Models;
 using Listenarr.Api.Controllers;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Tests.Features.Api.Services
 {

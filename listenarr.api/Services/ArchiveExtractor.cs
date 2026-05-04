@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
+using Listenarr.Application.Common;
 using SharpCompress.Archives;
 using SharpCompress.Common;
 using SharpCompress.Readers;
@@ -38,7 +39,7 @@ namespace Listenarr.Api.Services
             return KnownArchiveExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase);
         }
 
-        public async Task<string?> ExtractArchiveToTempDirAsync(string archivePath)
+        public async Task<TempDirectory?> ExtractArchiveToTempDirAsync(string archivePath)
         {
             try
             {
@@ -98,7 +99,7 @@ namespace Listenarr.Api.Services
                     }
                 }
 
-                return await Task.FromResult(tmp);
+                return await Task.FromResult(new TempDirectory(tmp));
             }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException && ex is not StackOverflowException)
             {

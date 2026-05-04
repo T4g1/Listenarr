@@ -22,10 +22,15 @@ using Xunit;
 using System.IO.Compression;
 using System.Reflection;
 using Listenarr.Tests.Common;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Tests.Builders;
 using Listenarr.Application.Services;
 using Listenarr.Domain.Models;
+using Listenarr.Application.Models.Configurations;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Listenarr.Tests.Mocks;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -34,12 +39,30 @@ namespace Listenarr.Tests.Features.Api.Services
     [Trait("Category", "CompletedDownloadProcessor")]
     public class CompletedDownloadProcessorTests : BaseTests
     {
-        private readonly string CLIENT_CONFIG_ID = "dl-client-1";
-        private readonly string DOWNLOAD_COMPLETE_ID = "dl-complete-1";
-        private readonly int AUDIOBOOK_ID = 1;
+        private readonly static string CLIENT_CONFIG_ID = "dl-client-1";
+        private readonly static string DOWNLOAD_COMPLETE_ID = "dl-complete-1";
+        private readonly static int AUDIOBOOK_ID = 1;
 
-        private Mock<IToastService> _toastMock = new Mock<IToastService>();
-        private Mock<IDownloadHistoryService> _downloadHistoryMock = new Mock<IDownloadHistoryService>();
+        private List<string> capturedFiles = [];
+
+        private Mock<IToastService> _toastMock = new();
+        private Mock<IDownloadHistoryService> _downloadHistoryMock = new();
+        private DownloadClientGatewayMock _downloadClientGatewayMock = new();
+
+        private DownloadClientConfiguration _client = new DownloadClientConfigurationBuilder()
+                .WithId(CLIENT_CONFIG_ID)
+                .WithName("Slskd")
+                .WithType("slskd")
+                .WithHost("localhost")
+                .WithPort(5030)
+                .Build();
+
+        private Audiobook _audiobook = new AudiobookBuilder()
+            .WithId(AUDIOBOOK_ID)
+            .WithTitle("Seconde Fondation")
+            .WithAuthor("Isaac Asimov")
+            .WithSeries("Le Cycle de Fondation")
+            .Build();
 
         public override async Task InitializeAsync()
         {
@@ -63,6 +86,22 @@ namespace Listenarr.Tests.Features.Api.Services
 
             _services.AddSingleton(_toastMock.Object);
             _services.AddSingleton(_downloadHistoryMock.Object);
+            _services.AddSingleton<IDownloadClientGateway>(_downloadClientGatewayMock);
+            _services.Replace(new ServiceDescriptor(typeof(IDownloadItemService), typeof(DownloadItemService), ServiceLifetime.Singleton));
+
+            var downloadImportServiceMock = new Mock<IDownloadImportService>();
+            downloadImportServiceMock
+                .Setup(f => f.ImportFilesFromDirectoryAsync(It.IsAny<Download>(), It.IsAny<Audiobook>(), It.IsAny<IEnumerable<string>>(), It.IsAny<ApplicationSettings>(), It.IsAny<CancellationToken>()))
+                .Callback<Download, Audiobook, IEnumerable<string>, ApplicationSettings, CancellationToken>((_, _, files, _, _) => capturedFiles = [.. files])
+                .ReturnsAsync((Download _, Audiobook _, IEnumerable<string> files, ApplicationSettings _, CancellationToken _) =>
+                    [.. files.Select(f => new ImportResult
+                    {
+                        Success = true,
+                        SourcePath = f,
+                        FinalPath = f
+                    })]);
+            _services.AddSingleton(downloadImportServiceMock.Object);
+
             Init();
 
             await InitDataAsync();
@@ -78,14 +117,8 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithImportBlacklistExtension(".nfo")
                 .Build());
 
-            await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfiguration
-            {
-                Id = CLIENT_CONFIG_ID,
-                Name = "Slskd",
-                Type = "slskd",
-                Host = "localhost",
-                Port = 5030
-            });
+            await _downloadClientConfigurationRepository.SaveAsync(_client);
+            await _audiobookRepository.AddAsync(_audiobook);
 
             await _downloadRepository.AddAsync(new Download
             {
@@ -98,6 +131,15 @@ namespace Listenarr.Tests.Features.Api.Services
                     ["Protocol"] = DownloadProtocol.Torrent
                 }
             });
+
+            var client = new DownloadClientConfigurationBuilder()
+                .WithId("client-cover-path")
+                .Build();
+
+            var audiobook = new AudiobookBuilder()
+                .WithTitle("Wonderful")
+                .WithAuthor("Author")
+                .Build();
         }
 
         [Fact]
@@ -105,10 +147,8 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Scenario", "TransientFailureStaysImportPending")]
         public async Task MarkImportFailureAsync_FirstAttempt_KeepsImportPendingForRetry()
         {
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            var download = await _downloadRepository.AddAsync(new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.Downloading,
                 DownloadClientId = "client-retry",
                 Title = "Retry Candidate"
@@ -120,28 +160,29 @@ namespace Listenarr.Tests.Features.Api.Services
                 .GetMethod("MarkImportFailureAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(markImportFailureMethod);
 
-            var task = (Task?)markImportFailureMethod!.Invoke(processor, new object?[]
-            {
-                downloadId,
+            var task = (Task?)markImportFailureMethod!.Invoke(processor,
+            [
+                download,
                 "TransientFailure",
                 "boom",
                 null,
                 false
-            });
+            ]);
 
             Assert.NotNull(task);
             await task!;
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.Equal(DownloadStatus.ImportPending, tracked!.Status);
             Assert.Equal(1, tracked.ImportAttempts);
             Assert.Null(tracked.ImportBlockReason);
-            Assert.True(tracked.ImportBlockMessages == null || tracked.ImportBlockMessages.Count == 0);
-            Assert.Contains("boom", tracked.ErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.True(tracked.ImportBlockMessages.Count == 1);
+            Assert.Contains("boom", tracked.ImportBlockMessages[0], StringComparison.OrdinalIgnoreCase);
+            Assert.Null(tracked.ErrorMessage);
 
             _downloadHistoryMock.Verify(h => h.RecordImportFailedAsync(
-                downloadId,
+                download.Id,
                 "client-retry",
                 "Retry Candidate",
                 It.Is<string>(msg => msg.Contains("boom", StringComparison.OrdinalIgnoreCase))), Times.Once);
@@ -158,10 +199,8 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Scenario", "ThresholdFailureBlocksAndSignalsManualInteraction")]
         public async Task MarkImportFailureAsync_ThirdAttempt_BlocksAndSignalsManualInteraction()
         {
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            var download = await _downloadRepository.AddAsync(new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.ImportPending,
                 DownloadClientId = "client-threshold",
                 Title = "Threshold Candidate",
@@ -176,7 +215,7 @@ namespace Listenarr.Tests.Features.Api.Services
 
             var task = (Task?)markImportFailureMethod!.Invoke(processor, new object?[]
             {
-                downloadId,
+                download,
                 "RepeatedFailure",
                 "still failing",
                 null,
@@ -186,7 +225,7 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.NotNull(task);
             await task!;
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.Equal(DownloadStatus.ImportBlocked, tracked!.Status);
             Assert.Equal(3, tracked.ImportAttempts);
@@ -195,7 +234,7 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.Contains(tracked.ImportBlockMessages!, m => m.Contains("still failing", StringComparison.OrdinalIgnoreCase));
 
             _downloadHistoryMock.Verify(h => h.RecordImportFailedAsync(
-                downloadId,
+                download.Id,
                 "client-threshold",
                 "Threshold Candidate",
                 It.Is<string>(msg => msg.Contains("still failing", StringComparison.OrdinalIgnoreCase))), Times.Once);
@@ -218,11 +257,8 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Scenario", "AttemptCounterPersistsAcrossRestart")]
         public async Task MarkImportFailureAsync_AttemptCounterPersistsAcrossProcessorRestartSimulation()
         {
-            var downloadId = Guid.NewGuid().ToString();
-
-            await _downloadRepository.AddAsync(new Download
+            var download = await _downloadRepository.AddAsync(new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.ImportPending,
                 DownloadClientId = "client-persist",
                 Title = "Persistent Attempts",
@@ -234,35 +270,35 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.NotNull(method);
 
             var firstProcessor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            var firstTask = (Task?)method!.Invoke(firstProcessor, new object?[]
-            {
-                downloadId,
+            var firstTask = (Task?)method!.Invoke(firstProcessor,
+            [
+                download,
                 "TransientFailure",
                 "attempt two",
                 null,
                 false
-            });
+            ]);
             Assert.NotNull(firstTask);
             await firstTask!;
 
-            var afterFirst = await _downloadRepository.FindAsync(downloadId);
+            var afterFirst = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(afterFirst);
             Assert.Equal(DownloadStatus.ImportPending, afterFirst!.Status);
             Assert.Equal(2, afterFirst.ImportAttempts);
 
             var restartedProcessor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            var secondTask = (Task?)method!.Invoke(restartedProcessor, new object?[]
-            {
-                downloadId,
+            var secondTask = (Task?)method!.Invoke(restartedProcessor,
+            [
+                download,
                 "TransientFailure",
                 "attempt three",
                 null,
                 false
-            });
+            ]);
             Assert.NotNull(secondTask);
             await secondTask!;
 
-            var afterSecond = await _downloadRepository.FindAsync(downloadId);
+            var afterSecond = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(afterSecond);
             Assert.Equal(DownloadStatus.ImportBlocked, afterSecond!.Status);
             Assert.Equal(3, afterSecond.ImportAttempts);
@@ -274,19 +310,19 @@ namespace Listenarr.Tests.Features.Api.Services
         [Trait("Scenario", "NoImportableFilesBlocksAndSignalsManualInteraction")]
         public async Task ProcessCompletedDownloadAsync_NoImportableFiles_BlocksDownload_AndSignalsManualInteraction()
         {
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            var download = new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.Downloading,
-                DownloadClientId = "client-1",
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = (await CreateAudiobook()).Id,
                 Title = "Broken Import"
-            });
+            };
+            await _downloadRepository.AddAsync(download);
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, string.Empty);
+            await processor.ProcessCompletedDownloadAsync(download, string.Empty);
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.Equal(DownloadStatus.ImportBlocked, tracked!.Status);
             Assert.Equal("NoImportableFiles", tracked.ImportBlockReason);
@@ -295,8 +331,8 @@ namespace Listenarr.Tests.Features.Api.Services
             Assert.Contains(tracked.ImportBlockMessages!, m => m.Contains("Manual interaction is required.", StringComparison.OrdinalIgnoreCase));
 
             _downloadHistoryMock.Verify(h => h.RecordImportFailedAsync(
-                downloadId,
-                "client-1",
+                download.Id,
+                download.DownloadClientId,
                 "Broken Import",
                 It.Is<string>(msg => msg.Contains("Manual interaction is required.", StringComparison.OrdinalIgnoreCase))), Times.Once);
 
@@ -316,32 +352,29 @@ namespace Listenarr.Tests.Features.Api.Services
         [Fact]
         [Trait("Method", "ProcessCompletedDownloadAsync")]
         [Trait("Scenario", "SingleFileImportSetsMovedAndFinalPath")]
-        public async Task ProcessCompletedDownloadAsync_SingleFile_UpdatesFinalPathAndStatus()
+        public async Task ProcessCompletedDownloadAsync_SingleFile_UpdatesStatus()
         {
             // Arrange
-            var finalPath = FileUtils.GetAbsolutePath("temp", "audiobook.mp3");
+            var finalPath = await FileService.GetTempFileAsync("audiobook.mp3");
 
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            _downloadClientGatewayMock.SourceFiles = [finalPath];
+
+            var download = new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.Downloading,
-                // FIXME: Is it relevant to have Download without Audiobook ID ? Download should be aborted/removed if audiobook is removed ?
-                AudiobookId = null
-            });
-
-            var tracked = await _downloadRepository.FindAsync(downloadId);
-            Assert.Empty(tracked.FinalPath);
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = (await CreateAudiobook()).Id
+            };
+            await _downloadRepository.AddAsync(download);
 
             // Act
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, finalPath);
+            await processor.ProcessCompletedDownloadAsync(download, finalPath);
 
             // Assert
-            tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.True(tracked!.Status == DownloadStatus.Completed || tracked.Status == DownloadStatus.Moved, $"Expected Completed or Moved, got {tracked.Status}");
-            Assert.NotEmpty(tracked.FinalPath);
         }
 
         [Fact]
@@ -350,22 +383,25 @@ namespace Listenarr.Tests.Features.Api.Services
         public async Task ProcessCompletedDownloadAsync_Directory_InvokesDirectoryImport()
         {
             // Arrange
-            _ = await FileService.GetFileAsync(FileService.GetTempPath(), "file1.mp3");
+            _downloadClientGatewayMock.SourceFiles = [
+                await FileService.GetFileAsync(FileService.GetTempPath(), "file1.mp3")
+            ];
 
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            var download = new Download
             {
-                Id = downloadId,
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = (await CreateAudiobook()).Id,
                 // FIXME: This is not a completed download, thus ProcessCompletedDownloadAsync should do nothing on it
                 Status = DownloadStatus.Downloading
-            });
+            };
+            await _downloadRepository.AddAsync(download);
 
             // Act
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileService.GetTempPath());
+            await processor.ProcessCompletedDownloadAsync(download, FileService.GetTempPath());
 
             // Assert
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.True(tracked!.Status == DownloadStatus.Completed || tracked.Status == DownloadStatus.Moved, $"Expected Completed or Moved, got {tracked.Status}");
         }
@@ -380,38 +416,26 @@ namespace Listenarr.Tests.Features.Api.Services
             var nfoPath = await FileService.GetFileAsync(FileService.GetTempPath(), "release.nfo");
             var archivePath = await FileService.GetFileAsync(FileService.GetTempPath(), "release.zip");
 
-            var downloadId = Guid.NewGuid().ToString();
+            _downloadClientGatewayMock.SourceFiles = [audioPath, coverPath, nfoPath, archivePath];
 
-            string[]? capturedFiles = null;
-            var fileFinalizerMock = new Mock<IFileFinalizer>();
-            fileFinalizerMock
-                .Setup(f => f.ImportFilesFromDirectoryAsync(downloadId, null, It.IsAny<IEnumerable<string>>(), It.IsAny<ApplicationSettings>()))
-                .Callback<string, int?, IEnumerable<string>, ApplicationSettings>((_, _, files, _) => capturedFiles = files.ToArray())
-                .ReturnsAsync((string _, int? _, IEnumerable<string> files, ApplicationSettings _) =>
-                    [.. files.Select(f => new ImportResult
-                    {
-                        Success = true,
-                        SourcePath = f,
-                        FinalPath = f
-                    })]);
-
-            _services.AddSingleton(fileFinalizerMock.Object);
-            Init();
+            var audiobook = await CreateAudiobook();
+            var download = new Download
+            {
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = audiobook.Id,
+                // FIXME: This is not a completed download, thus ProcessCompletedDownloadAsync should do nothing on it
+                Status = DownloadStatus.Downloading
+            };
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithoutExtractArchive()
                 .WithImportBlacklistExtension(".nfo")
                 .Build());
 
-            await _downloadRepository.AddAsync(new Download
-            {
-                Id = downloadId,
-                // FIXME: This is not a completed download, thus ProcessCompletedDownloadAsync should do nothing on it
-                Status = DownloadStatus.Downloading
-            });
+            await _downloadRepository.AddAsync(download);
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileService.GetTempPath());
+            await processor.ProcessCompletedDownloadAsync(download, FileService.GetTempPath());
 
             Assert.NotNull(capturedFiles);
             Assert.Contains(audioPath, capturedFiles!);
@@ -429,33 +453,20 @@ namespace Listenarr.Tests.Features.Api.Services
             var foreignAudioPath = await FileService.GetTempFileAsync("Different Book.m4b");
             var coverPath = await FileService.GetTempFileAsync("cover.jpg");
 
-            var downloadId = Guid.NewGuid().ToString();
+            _downloadClientGatewayMock.SourceFiles = [targetAudioPath, coverPath];
 
-            string[]? capturedFiles = null;
-            var fileFinalizerMock = new Mock<IFileFinalizer>();
-            fileFinalizerMock
-                .Setup(f => f.ImportFilesFromDirectoryAsync(downloadId, null, It.IsAny<IEnumerable<string>>(), It.IsAny<ApplicationSettings>()))
-                .Callback<string, int?, IEnumerable<string>, ApplicationSettings>((_, _, files, _) => capturedFiles = files.ToArray())
-                .ReturnsAsync((string _, int? _, IEnumerable<string> files, ApplicationSettings _) =>
-                    [.. files.Select(f => new ImportResult
-                    {
-                        Success = true,
-                        SourcePath = f,
-                        FinalPath = f
-                    })]);
-
-            _services.AddSingleton(fileFinalizerMock.Object);
-            Init();
-
-            await _downloadRepository.AddAsync(new Download
+            var audiobook = await CreateAudiobook();
+            var download = new Download
             {
-                Id = downloadId,
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = audiobook.Id,
                 Status = DownloadStatus.Downloading,
                 Title = "Target Book"
-            });
+            };
+            await _downloadRepository.AddAsync(download);
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileService.GetTempPath());
+            await processor.ProcessCompletedDownloadAsync(download, FileService.GetTempPath());
 
             Assert.NotNull(capturedFiles);
             Assert.Contains(targetAudioPath, capturedFiles!);
@@ -473,52 +484,29 @@ namespace Listenarr.Tests.Features.Api.Services
             var txtPath = await FileService.GetTempFileAsync("book.txt");
             var unrelatedPath = await FileService.GetTempFileAsync("unrelated.jpg");
 
-            var downloadId = Guid.NewGuid().ToString();
+            _downloadClientGatewayMock.SourceFiles = [
+                firstAudioPath,
+                secondAudioPath,
+                txtPath
+            ];
 
-            string[]? capturedFiles = null;
-            var fileFinalizerMock = new Mock<IFileFinalizer>();
-            fileFinalizerMock
-                .Setup(f => f.ImportFilesFromDirectoryAsync(downloadId, null, It.IsAny<IEnumerable<string>>(), It.IsAny<ApplicationSettings>()))
-                .Callback<string, int?, IEnumerable<string>, ApplicationSettings>((_, _, files, _) => capturedFiles = files.ToArray())
-                .ReturnsAsync((string _, int? _, IEnumerable<string> files, ApplicationSettings _) =>
-                    [.. files.Select(f => new ImportResult
-                    {
-                        Success = true,
-                        SourcePath = f,
-                        FinalPath = f
-                    })]);
-
-            var importResolverMock = new Mock<IImportItemResolutionService>();
-            importResolverMock
-                .Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == downloadId),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download _, QueueItem queueItem, QueueItem? _, CancellationToken _) =>
-                {
-                    queueItem.SourceFiles = new List<string> { firstAudioPath, secondAudioPath, txtPath };
-                    return queueItem;
-                });
-
-            _services.AddSingleton(fileFinalizerMock.Object);
-            _services.AddSingleton(importResolverMock.Object);
-            Init();
-
-            await _downloadRepository.AddAsync(new Download
+            var audiobook = await CreateAudiobook();
+            var download = new Download
             {
-                Id = downloadId,
                 Status = DownloadStatus.Downloading,
-                DownloadClientId = "client-source-truth",
+                DownloadClientId = (await CreateDownloadClientConfiguration()).Id,
+                AudiobookId = audiobook.Id,
                 Title = "Alpha Book",
                 Metadata = new Dictionary<string, object>
                 {
                     ["TorrentHash"] = "ABC123"
                 }
-            });
+            };
+
+            await _downloadRepository.AddAsync(download);
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileService.GetTempPath());
+            await processor.ProcessCompletedDownloadAsync(download, FileService.GetTempPath());
 
             Assert.NotNull(capturedFiles);
             Assert.Contains(firstAudioPath, capturedFiles!);
@@ -534,48 +522,24 @@ namespace Listenarr.Tests.Features.Api.Services
         {
             var audioPath = await FileService.GetTempFileAsync("book.m4b");
             var coverPath = await FileService.GetTempFileAsync("book.jpg");
+            _downloadClientGatewayMock.SourceFiles = [audioPath, coverPath];
 
-            var downloadId = Guid.NewGuid().ToString();
-
-            string[]? capturedFiles = null;
-            var fileFinalizerMock = new Mock<IFileFinalizer>();
-            fileFinalizerMock
-                .Setup(f => f.ImportFilesFromDirectoryAsync(downloadId, null, It.IsAny<IEnumerable<string>>(), It.IsAny<ApplicationSettings>()))
-                .Callback<string, int?, IEnumerable<string>, ApplicationSettings>((_, _, files, _) => capturedFiles = files.ToArray())
-                .ReturnsAsync((string _, int? _, IEnumerable<string> files, ApplicationSettings _) =>
-                    [.. files.Select(f => new ImportResult
-                    {
-                        Success = true,
-                        SourcePath = f,
-                        FinalPath = f
-                    })]);
-
-            fileFinalizerMock
-                .Setup(f => f.ImportSingleFileAsync(It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<string>(), It.IsAny<ApplicationSettings>()))
-                .Throws(new Xunit.Sdk.XunitException("single-file import should not run when a non-audio completion path has sibling audio"));
-
-            _services.AddSingleton(fileFinalizerMock.Object);
-            Init();
-
-            await _downloadRepository.AddAsync(new Download
-            {
-                Id = downloadId,
-                Status = DownloadStatus.Downloading,
-                DownloadClientId = "client-cover-path",
-                Title = "Book"
-            });
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithStatus(DownloadStatus.Downloading)
+                .WithDownloadClientConfiguration(_client)
+                .WithAudiobook(await CreateAudiobook())
+                .Build());
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, coverPath);
+            await processor.ProcessCompletedDownloadAsync(download, coverPath);
 
             Assert.NotNull(capturedFiles);
             Assert.Contains(audioPath, capturedFiles!);
             Assert.Contains(coverPath, capturedFiles!);
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.Equal(DownloadStatus.Moved, tracked!.Status);
-            Assert.Equal(audioPath, tracked.FinalPath);
         }
 
         [Fact]
@@ -585,31 +549,34 @@ namespace Listenarr.Tests.Features.Api.Services
         {
             var nested = FileService.GetTempDirectory("nested");
             var filePath = await FileService.GetFileAsync(nested, "file2.mp3");
+            _downloadClientGatewayMock.SourceFiles = [filePath];
 
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
-            {
-                Id = downloadId,
-                Status = DownloadStatus.Downloading
-            });
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithStatus(DownloadStatus.Downloading)
+                .WithDownloadClientConfiguration(_client)
+                .WithAudiobook(await CreateAudiobook())
+                .Build());
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithOutputPath(FileService.GetTempPath())
                 .Build());
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileService.GetTempPath());
+            await processor.ProcessCompletedDownloadAsync(download, FileService.GetTempPath());
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.True(tracked!.Status == DownloadStatus.Completed || tracked.Status == DownloadStatus.Moved, $"Expected Completed or Moved, got {tracked.Status}");
-            Assert.NotEmpty(tracked.FinalPath);
         }
 
         [Fact]
         [Trait("Scenario", "ArchiveExtractionImportsContainedFile")]
         public async Task ProcessCompletedDownloadAsync_ArchiveExtraction_ImportsContainedFile()
         {
+            _services.Replace(new ServiceDescriptor(typeof(IDownloadImportService), typeof(DownloadImportService), ServiceLifetime.Singleton));
+            Init();
+            await InitDataAsync();
+
             var destinationDirectory = FileService.GetTempDirectory("destination");
             var inner = FileService.GetTempDirectory("inner");
             _ = await FileService.GetFileAsync(inner, "audio.mp3");
@@ -617,12 +584,18 @@ namespace Listenarr.Tests.Features.Api.Services
             ZipFile.CreateFromDirectory(inner, zipPath);
             Assert.True(File.Exists(zipPath));
 
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
-            {
-                Id = downloadId,
-                Status = DownloadStatus.Downloading
-            });
+            _downloadClientGatewayMock.SourceFiles = [zipPath];
+
+            var audiobook = await CreateAudiobook();
+            audiobook.BasePath = Path.Join(destinationDirectory, "Fake Author/Fake Title/Anything Really");
+            await _audiobookRepository.UpdateAsync(audiobook);
+
+            var download = await _downloadRepository.AddAsync(new DownloadBuilder()
+                .WithStatus(DownloadStatus.Downloading)
+                .WithDownloadClientConfiguration(_client)
+                .WithPath(FileService.GetTempPath())
+                .WithAudiobook(audiobook)
+                .Build());
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithExtractArchive()
@@ -632,13 +605,12 @@ namespace Listenarr.Tests.Features.Api.Services
                 .Build());
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, zipPath);
+            await processor.ProcessCompletedDownloadAsync(download, zipPath);
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.True(tracked!.Status == DownloadStatus.Completed || tracked.Status == DownloadStatus.Moved, $"Expected Completed or Moved, got {tracked.Status}");
-            // FIXME: -01 gets added even though the MultiFileNamingPattern explicitely ask not to
-            Assert.Contains("audio-01.mp3", tracked.FinalPath ?? string.Empty);
+            Assert.True(File.Exists(Path.Join(audiobook.BasePath, "audio.mp3")));
         }
 
         [Fact]
@@ -650,21 +622,21 @@ namespace Listenarr.Tests.Features.Api.Services
 
             _services.AddSingleton(queueMock.Object);
             Init();
+            await InitDataAsync();
 
-            var downloadId = Guid.NewGuid().ToString();
-            await _downloadRepository.AddAsync(new Download
+            var download = new Download
             {
-                Id = downloadId,
+                AudiobookId = (await CreateAudiobook()).Id,
+                DownloadClientId = _client.Id,
                 Status = DownloadStatus.Moved,
-                DownloadClientId = "client-terminal",
-                Title = "Already Imported",
-                FinalPath = "C:\\library\\already-imported.m4b"
-            });
+                Title = "Already Imported"
+            };
+            await _downloadRepository.AddAsync(download);
 
             var processor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await processor.ProcessCompletedDownloadAsync(downloadId, FileUtils.GetAbsolutePath("temp", "should-not-run.m4b"));
+            await processor.ProcessCompletedDownloadAsync(download, FileUtils.GetAbsolutePath("temp", "should-not-run.m4b"));
 
-            var tracked = await _downloadRepository.FindAsync(downloadId);
+            var tracked = await _downloadRepository.FindAsync(download.Id);
             Assert.NotNull(tracked);
             Assert.Equal(DownloadStatus.Moved, tracked!.Status);
 
@@ -673,17 +645,14 @@ namespace Listenarr.Tests.Features.Api.Services
 
         [Fact]
         [Trait("Method", "ProcessCompletedDownloadAsync")]
-        public async Task ProcessCOmpleteDownloadAsync_MultipleFiles()
+        public async Task ProcessCompleteDownloadAsync_MultipleFiles()
         {
-            var remoteSource = FileService.GetTempDirectory("dl-remote-source");
+            _services.Replace(new ServiceDescriptor(typeof(IDownloadImportService), typeof(DownloadImportService), ServiceLifetime.Singleton));
+            Init();
+            await InitDataAsync();
+
             var localSource = FileService.GetTempDirectory("dl-local-source");
             var localDestination = FileService.GetTempDirectory("dl-destination");
-
-            var remoteChapter1 = Path.Join(remoteSource, "01 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter2 = Path.Join(remoteSource, "02 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter3 = Path.Join(remoteSource, "03 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter4 = Path.Join(remoteSource, "04 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteCompanion = Path.Join(remoteSource, "Seconde Fondation Isaac Asimov.nfo");
 
             var localChapter1 = await FileService.GetFileAsync(localSource, "01 - Seconde Fondation Isaac Asimov.mp3");
             var localChapter2 = await FileService.GetFileAsync(localSource, "02 - Seconde Fondation Isaac Asimov.mp3");
@@ -691,28 +660,7 @@ namespace Listenarr.Tests.Features.Api.Services
             var localChapter4 = await FileService.GetFileAsync(localSource, "04 - Seconde Fondation Isaac Asimov.mp3");
             var localCompanion = await FileService.GetFileAsync(localSource, "Seconde Fondation Isaac Asimov.nfo");
 
-            var importItemResolutionServiceMock = new Mock<IImportItemResolutionService>();
-            importItemResolutionServiceMock
-                .Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == DOWNLOAD_COMPLETE_ID),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
-                {
-                    queueItem.SourceFiles = new List<string> {
-                        remoteChapter1,
-                        remoteChapter2,
-                        remoteChapter3,
-                        remoteChapter4,
-                        remoteCompanion
-                    };
-                    return queueItem;
-                });
-
-            _services.AddSingleton(importItemResolutionServiceMock.Object);
-            Init();
-            await InitDataAsync();
+            _downloadClientGatewayMock.SourceFiles = [localChapter1, localChapter2, localChapter3, localChapter4, localCompanion];
 
             await _applicationSettingsRepository.SaveAsync(new ApplicationSettingsBuilder()
                 .WithMoveFileOnCompleted()
@@ -720,37 +668,23 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithImportBlacklistExtension(".nfo")
                 .Build());
 
-            var client = await _downloadClientConfigurationRepository.GetByIdAsync(CLIENT_CONFIG_ID);
             var download = (await _downloadRepository.GetByIdsAsync([DOWNLOAD_COMPLETE_ID])).First();
-
-            await _remotePathMappingRepository.SaveAsync(new RemotePathMapping
-            {
-                Id = 1,
-                DownloadClientId = CLIENT_CONFIG_ID,
-                Name = "TEST_REMOTE_MAPPING",
-                RemotePath = remoteSource,
-                LocalPath = localSource,
-            });
 
             var basePath = Path.Join(localDestination, "Isaac Asimov", "Le Cycle de Fondation", "Seconde Fondation");
 
-            await _audiobookRepository.AddAsync(new Audiobook
-            {
-                Id = AUDIOBOOK_ID,
-                Title = "Seconde Fondation",
-                Authors = [
-                    "Isaac Asimov"
-                ],
-                PublishYear = "1996",
-                Series = "Le Cycle de Fondation",
-                BasePath = basePath
-            });
+            _audiobook.PublishYear = "1996";
+            _audiobook.BasePath = basePath;
+            await _audiobookRepository.UpdateAsync(_audiobook);
 
             var completeDownloadProcessor = MockUtils.CreateCompletedDownloadProcessor(_provider);
-            await completeDownloadProcessor.ProcessCompletedDownloadAsync(download.Id, localSource);
+            await completeDownloadProcessor.ProcessCompletedDownloadAsync(download, localSource);
 
-            var audiobook = await _audiobookRepository.GetByIdAsync(AUDIOBOOK_ID);
+            download = await _downloadRepository.FindAsync(download.Id);
+            Assert.NotNull(download);
+            Assert.Equal(DownloadStatus.Moved, download.Status);
+
             var files = await _audiobookFileRepository.GetAllAsync();
+            Assert.Equal(4, files.Count);
 
             // FIXME: disc and track number are the same because ffprobe metadata are not used (see ImportService.ImportFilesFromDirectoryAsync)
             Assert.True(File.Exists(Path.Join(basePath, "Seconde Fondation-01-01.mp3")));

@@ -1,14 +1,17 @@
+using Listenarr.Api.Controllers;
 using Listenarr.Api.Extensions;
 using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
 using Listenarr.Api.Services.Search;
 using Listenarr.Api.Services.Search.Filters;
 using Listenarr.Api.Services.Search.Strategies;
+using Listenarr.Application.Interfaces;
 using Listenarr.Application.Services;
 using Listenarr.Domain.Models;
 using Listenarr.Infrastructure.Extensions;
 using Listenarr.Tests.Mocks;
 using Listenarr.Tests.Mocks.Api;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -17,22 +20,33 @@ using Moq;
 
 namespace Listenarr.Tests.Builders
 {
+    /// <summary>
+    /// Mock the following by default:
+    /// - IDownloadItemService
+    /// </summary>
     public class ServiceCollectionBuilder
     {
-        private Mock<IImportItemResolutionService> _importItemResolutionService;
+        private Mock<IDownloadItemService> _downloadItemService;
 
         public ServiceCollectionBuilder()
         {
-            _importItemResolutionService = new Mock<IImportItemResolutionService>();
-            _importItemResolutionService
+            _downloadItemService = new Mock<IDownloadItemService>();
+            _downloadItemService
                 .Setup(r => r.ResolveImportItemAsync(
                     It.IsAny<Download>(),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
+                .ReturnsAsync((Download download, CancellationToken ct) =>
                 {
-                    return queueItem;
+                    return new QueueItem();
+                });
+            _downloadItemService
+                .Setup(r => r.MatchLocalAndDownloadedFilesAsync(
+                    It.IsAny<Download>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Download download, string localPath, CancellationToken ct) =>
+                {
+                    return Directory.EnumerateFiles(localPath, "*.*", SearchOption.AllDirectories).ToList();
                 });
         }
 
@@ -60,14 +74,17 @@ namespace Listenarr.Tests.Builders
             services.AddSingleton(webHostEnvironmentMock);
             services.AddSingleton(webHostEnvironmentMock.Object);
 
-            services.AddSingleton(_importItemResolutionService);
-            services.AddSingleton(_importItemResolutionService.Object);
+            services.AddSingleton(_downloadItemService);
+            services.AddSingleton(_downloadItemService.Object);
 
             services.AddSingleton(startupConfigServiceMock.Object);
             services.AddSingleton(new Mock<IHubContext<DownloadHub>>().Object);
             services.AddSingleton(new Mock<IDownloadHistoryService>().Object);
             services.AddSingleton(new Mock<IDiscordBotService>().Object);
             services.AddSingleton<IFfmpegService, FfmpegServiceMock>();
+            services.AddSingleton<IConfigurationService, ConfigurationService>();
+            services.AddSingleton<IMoveQueueService, MoveQueueService>();
+            services.AddSingleton<IScanQueueService, ScanQueueService>();
             services.AddSingleton<DownloadProcessingBackgroundService>();
             services.AddSingleton<MetadataConverters>();
             services.AddSingleton<MetadataMerger>();
@@ -79,6 +96,10 @@ namespace Listenarr.Tests.Builders
             services.AddSingleton<SearchResultScorer>();
             services.AddSingleton<AsinSearchHandler>();
             services.AddSingleton<DownloadService>();
+            services.AddSingleton<MoveBackgroundService>();
+            services.AddSingleton<MoveQueueService>();
+            services.AddSingleton<LibraryController>();
+            services.AddSingleton(new EphemeralDataProtectionProvider().CreateProtector("Listenarr.ConfigurationService.ProwlarrImport"));
 
             services.AddSingleton<AudibleApiMock>();
             services.AddSingleton<AudnexusServiceApiMock>();

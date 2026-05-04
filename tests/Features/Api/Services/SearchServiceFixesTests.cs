@@ -27,6 +27,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using Listenarr.Api.Services.Search.Providers;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -34,14 +35,14 @@ namespace Listenarr.Tests.Features.Api.Services
     {
         private static SearchService CreateSearchService()
         {
-            var client = new System.Net.Http.HttpClient();
+            var client = new HttpClient();
             var configuration = Mock.Of<IConfigurationService>();
             var logger = NullLogger<SearchService>.Instance;
             var openLibraryService = Mock.Of<IOpenLibraryService>();
             var imageCache = Mock.Of<IImageCacheService>();
             var hubContext = Mock.Of<IHubContext<DownloadHub>>();
-            var audible = new AudibleService(new System.Net.Http.HttpClient(), NullLogger<AudibleService>.Instance);
-            var audnexus = new AudnexusService(new System.Net.Http.HttpClient(), NullLogger<AudnexusService>.Instance);
+            var audible = new AudibleService(new HttpClient(), NullLogger<AudibleService>.Instance);
+            var audnexus = new AudnexusService(new HttpClient(), NullLogger<AudnexusService>.Instance);
             var converters = new MetadataConverters(imageCache, NullLogger<MetadataConverters>.Instance);
             var merger = new MetadataMerger(NullLogger<MetadataMerger>.Instance);
             var progress = new SearchProgressReporter(null, NullLogger<SearchProgressReporter>.Instance);

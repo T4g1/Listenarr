@@ -21,6 +21,8 @@ using System.Text;
 namespace Listenarr.Api.Services
 {
     using System.Collections.Concurrent;
+    using Listenarr.Application.Common;
+    using Listenarr.Application.Interfaces;
 
     public class SystemProcessRunner : IProcessRunner
     {

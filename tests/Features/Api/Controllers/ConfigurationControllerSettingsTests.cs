@@ -18,7 +18,8 @@
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
-using Listenarr.Domain.Models;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging.Abstractions;

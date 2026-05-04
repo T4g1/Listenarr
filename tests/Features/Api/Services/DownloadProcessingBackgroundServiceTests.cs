@@ -2,12 +2,14 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using Listenarr.Api.Services;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Tests.Builders;
 using Listenarr.Tests.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xunit;
+using Listenarr.Application.Interfaces;
+using Listenarr.Tests.Mocks;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
@@ -17,6 +19,14 @@ namespace Listenarr.Tests.Features.Api.Services
     {
         private readonly string CLIENT_CONFIG_ID = "dl-client-1";
         private readonly string DOWNLOAD_COMPLETE_ID = "dl-complete-1";
+
+        private readonly DownloadClientGatewayMock downloadClientGatewayMock = new();
+
+        public override async Task InitializeAsync()
+        {
+            _services.AddSingleton<IDownloadClientGateway>(downloadClientGatewayMock);
+            Init();
+        }
 
         [Fact]
         [Trait("Method", "EnqueueCompletedDownloadsAsync")]
@@ -34,17 +44,19 @@ namespace Listenarr.Tests.Features.Api.Services
             var localSource = FileService.GetTempDirectory("dl-local-source /");
             var localDestination = FileService.GetTempDirectory("dl-destination");
 
-            var remoteChapter1 = Path.Join(remoteSource, "01 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter2 = Path.Join(remoteSource, "02 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter3 = Path.Join(remoteSource, "03 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteChapter4 = Path.Join(remoteSource, "04 - Seconde Fondation Isaac Asimov.mp3");
-            var remoteCompanion = Path.Join(remoteSource, "Seconde Fondation Isaac Asimov.nfo");
-
             var localChapter1 = await FileService.GetFileAsync(localSource, "01 - Seconde Fondation Isaac Asimov.mp3");
             var localChapter2 = await FileService.GetFileAsync(localSource, "02 - Seconde Fondation Isaac Asimov.mp3");
             var localChapter3 = await FileService.GetFileAsync(localSource, "03 - Seconde Fondation Isaac Asimov.mp3");
             var localChapter4 = await FileService.GetFileAsync(localSource, "04 - Seconde Fondation Isaac Asimov.mp3");
             var localCompanion = await FileService.GetFileAsync(localSource, "Seconde Fondation Isaac Asimov.nfo");
+
+            downloadClientGatewayMock.SourceFiles = [
+                localChapter1,
+                localChapter2,
+                localChapter3,
+                localChapter4,
+                localCompanion
+            ];
 
             var client = await _downloadClientConfigurationRepository.SaveAsync(new DownloadClientConfigurationBuilder()
                 .WithId(CLIENT_CONFIG_ID)
@@ -71,25 +83,6 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithRemotePath(remoteSource)
                 .WithName("TEST_REMOTE_MAPPING")
                 .Build());
-
-            var importItemResolutionServiceMock = _provider.GetRequiredService<Mock<IImportItemResolutionService>>();
-            importItemResolutionServiceMock
-                .Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == download.Id),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken ct) =>
-                {
-                    queueItem.SourceFiles = new List<string> {
-                        remoteChapter1,
-                        remoteChapter2,
-                        remoteChapter3,
-                        remoteChapter4,
-                        remoteCompanion
-                    };
-                    return queueItem;
-                });
 
             var method = typeof(DownloadProcessingBackgroundService).GetMethod("EnqueueCompletedDownloadsAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.NotNull(method);
@@ -156,6 +149,21 @@ namespace Listenarr.Tests.Features.Api.Services
             queueServiceMock.Setup(q => q.QueueDownloadProcessingAsync("ddl-1", tempFile, "DDL"))
                 .ReturnsAsync("job-1");
             _services.AddSingleton(queueServiceMock.Object);
+
+            var downloadItemServiceMock = _provider.GetRequiredService<Mock<IDownloadItemService>>();
+            downloadItemServiceMock
+                .Setup(r => r.ResolveImportItemAsync(
+                    It.IsAny<Download>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((Download download, CancellationToken ct) =>
+                {
+                    return new QueueItem
+                    {
+                        ContentPath = tempFile
+                    };
+                });
+            _services.AddSingleton(downloadItemServiceMock);
+
             Init();
 
             var client = new DownloadClientConfigurationBuilder()
@@ -166,23 +174,12 @@ namespace Listenarr.Tests.Features.Api.Services
                 .WithId("ddl-1")
                 .WithCompletedStatus(DateTime.UtcNow)
                 .WithDownloadClientConfiguration(client)
+                .WithAudiobook(await CreateAudiobook())
                 .WithPath(tempFile)
                 .Build();
 
             await _downloadClientConfigurationRepository.SaveAsync(client);
             await _downloadRepository.AddAsync(download);
-
-            var importItemResolutionMock = _provider.GetRequiredService<Mock<IImportItemResolutionService>>();
-            importItemResolutionMock.Setup(r => r.ResolveImportItemAsync(
-                    It.Is<Download>(d => d.Id == "ddl-1"),
-                    It.IsAny<QueueItem>(),
-                    It.IsAny<QueueItem?>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Download download, QueueItem queueItem, QueueItem? previousAttempt, CancellationToken cancellationToken) =>
-                {
-                    queueItem.ContentPath = tempFile;
-                    return queueItem;
-                });
 
             var method = typeof(DownloadProcessingBackgroundService)
                 .GetMethod("EnqueueCompletedDownloadsAsync", BindingFlags.Instance | BindingFlags.NonPublic);

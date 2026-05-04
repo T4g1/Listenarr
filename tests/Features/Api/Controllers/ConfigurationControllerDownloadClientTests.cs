@@ -19,6 +19,7 @@ using System.Net;
 using Listenarr.Api.Controllers;
 using Listenarr.Api.Hubs;
 using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
 using Listenarr.Domain.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;

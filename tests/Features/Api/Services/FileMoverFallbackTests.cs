@@ -18,6 +18,8 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Listenarr.Api.Services;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;

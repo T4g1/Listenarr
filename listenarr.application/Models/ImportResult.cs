@@ -15,7 +15,9 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
-namespace Listenarr.Api.Services
+using Listenarr.Application.Models.Enumerations;
+
+namespace Listenarr.Application.Models
 {
     public class ImportResult
     {
@@ -23,10 +25,20 @@ namespace Listenarr.Api.Services
         public string? SourcePath { get; set; }
         public string? FinalPath { get; set; }
         public string? Message { get; set; }
-        public bool WasMoved { get; set; }
-        public bool WasCopied { get; set; }
+        public FileAction Action { get; set; }
         public bool WasRegisteredToAudiobook { get; set; }
         public string? SkippedReason { get; set; }
         public DateTime? Timestamp { get; set; } = DateTime.UtcNow;
+
+        public static ImportResult Error(string message, string sourcePath = "", string finalPath = "")
+        {
+            return new ImportResult
+            {
+                Success = false,
+                SourcePath = sourcePath,
+                FinalPath = finalPath,
+                Message = message
+            };
+        }
     }
 }

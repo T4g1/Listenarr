@@ -17,8 +17,9 @@
  */
 using Listenarr.Api.Utils;
 using Listenarr.Domain.Models;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Xunit;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Tests.Features.Api.Utils
 {

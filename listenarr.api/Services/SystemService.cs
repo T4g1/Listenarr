@@ -19,6 +19,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Listenarr.Application.Interfaces;
 
 namespace Listenarr.Api.Services
 {

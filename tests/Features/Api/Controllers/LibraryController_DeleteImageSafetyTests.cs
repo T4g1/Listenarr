@@ -23,7 +23,8 @@ using Listenarr.Api.Controllers;
 using Listenarr.Api.Services;
 using Listenarr.Application.Repositories;
 using Microsoft.AspNetCore.Mvc;
-using Listenarr.Domain.Models;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Tests.Features.Api.Controllers
 {
@@ -53,7 +54,7 @@ namespace Listenarr.Tests.Features.Api.Controllers
 
             var provider = services.BuildServiceProvider();
             var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-            var fileNaming = new Mock<Listenarr.Api.Services.IFileNamingService>().Object;
+            var fileNaming = new Mock<IFileNamingService>().Object;
 
             var audiobook = new Listenarr.Domain.Models.Audiobook { Id = 123, Title = "Test", ImageUrl = "/config/cache/images/library/../evil/../../secret.txt" };
             mockRepo.Setup(r => r.GetByIdAsync(It.IsAny<int>())).ReturnsAsync(audiobook);

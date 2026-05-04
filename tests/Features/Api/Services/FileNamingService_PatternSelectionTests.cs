@@ -17,10 +17,12 @@
  */
 using Xunit;
 using Moq;
-using Listenarr.Api.Services;
 using Microsoft.Extensions.Logging;
-using Listenarr.Domain.Utils;
+using Listenarr.Domain.Common;
 using Listenarr.Domain.Models;
+using Listenarr.Application.Interfaces;
+using Listenarr.Application.Services;
+using Listenarr.Application.Models.Configurations;
 
 namespace Listenarr.Tests.Features.Api.Services
 {
